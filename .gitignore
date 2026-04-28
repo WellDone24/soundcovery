@@ -2,6 +2,9 @@
 
 scripts/archive/
 
+*.db
+backend/data/*.db
+
 # dependencies
 /node_modules
 /.pnp
@@ -41,3 +44,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+*.db
+backend/data/*.db
