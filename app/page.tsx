@@ -24,26 +24,35 @@ export default function Home() {
     setError("");
     setLoading(true);
 
-    const response = await fetch("/api/recommend", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ band: input }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    const data = await response.json();
+    try {
+      const response = await fetch("/api/recommend", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ band: input }),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      setError(data.error ?? "Something went wrong.");
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error ?? "Something went wrong.");
+        setResults([]);
+        return;
+      }
+
+      setResults(data.recommendations);
+    } catch {
+      setError("This is taking longer than expected. Please try again.");
       setResults([]);
+    } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
-      return;
     }
-
-    console.log(data.recommendations);
-    setResults(data.recommendations);
-    setLoading(false);
   }
 
   return (
