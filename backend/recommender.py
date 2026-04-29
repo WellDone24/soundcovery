@@ -23,8 +23,6 @@ EXTERNAL_LINKS_TABLE = "artist_external_links"
 CANDIDATE_SET_NAME = "rock_for_people_2026"
 CANDIDATE_SET_VERSION = "V1"
 
-PARSE_STATUS_OK = "OK"
-
 MAX_CLUSTERS = 3
 RECS_PER_CLUSTER = 5
 
@@ -77,33 +75,50 @@ def split_input_artists(raw: str) -> list[str]:
 
 def load_artist_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     df = pd.read_sql_query(
-        f"""
+        """
         SELECT
             TRIM(mbid) AS mbid,
             TRIM(name) AS name,
-            TRIM(axis_name) AS axis_name,
-            AVG(parsed_value) AS value
-        FROM {SAEM_TABLE}
-        WHERE parse_status = ?
-          AND mbid IS NOT NULL
+            light_dark_mood,
+            raw_refined_aesthetic,
+            serious_ironic_tone,
+            warm_cold_aesthetic,
+            ordered_chaotic_structure,
+            minimal_complex_density,
+            direct_stylized_presentation,
+            driving_relaxed_energy,
+            dense_sparse_texture,
+            calm_aggressive_intensity,
+            subdued_overwhelming_impact,
+            authentic_scene_positioning
+        FROM artist_axis_vectors
+        WHERE mbid IS NOT NULL
           AND name IS NOT NULL
-          AND axis_name IS NOT NULL
-          AND parsed_value IS NOT NULL
-        GROUP BY TRIM(mbid), TRIM(name), TRIM(axis_name)
         """,
         conn,
-        params=[PARSE_STATUS_OK],
     )
 
     if df.empty:
-        raise ValueError("No SAEM data found.")
+        raise ValueError("No SAEM data found in artist_axis_vectors.")
 
-    return (
-        df.pivot(index=["mbid", "name"], columns="axis_name", values="value")
-        .dropna()
-        .reset_index()
-    )
+    axis_cols = [
+        "light_dark_mood",
+        "raw_refined_aesthetic",
+        "serious_ironic_tone",
+        "warm_cold_aesthetic",
+        "ordered_chaotic_structure",
+        "minimal_complex_density",
+        "direct_stylized_presentation",
+        "driving_relaxed_energy",
+        "dense_sparse_texture",
+        "calm_aggressive_intensity",
+        "subdued_overwhelming_impact",
+        "authentic_scene_positioning",
+    ]
 
+    df[axis_cols] = df[axis_cols].apply(pd.to_numeric, errors="coerce")
+
+    return df.dropna(subset=axis_cols).reset_index(drop=True)
 
 def load_candidate_set(conn: sqlite3.Connection) -> pd.DataFrame:
     return pd.read_sql_query(
