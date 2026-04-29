@@ -2,8 +2,8 @@
 
 scripts/archive/
 
-*.db
-backend/data/*.db
+#*.db
+#backend/data/*.db
 
 # dependencies
 /node_modules
