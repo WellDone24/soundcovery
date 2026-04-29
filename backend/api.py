@@ -11,14 +11,13 @@ app = FastAPI(title="Soundcovery Recommender API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",
-        "https://soundcovery.vercel.app",
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+# Origins später anpassen, wenn Frontend deployed ist
 
 class RecommendRequest(BaseModel):
     band: str
