@@ -85,7 +85,9 @@ export default function Home() {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !loading) handleSubmit();
+          if (e.key === "Enter" && !loading) {
+            handleSubmit();
+          }
         }}
         placeholder="e.g. Bring Me The Horizon"
         style={{ width: "100%", padding: 10, marginTop: 10 }}
@@ -134,9 +136,10 @@ export default function Home() {
           ))}
         </div>
       )}
-    <footer style={{ marginTop: 40, fontSize: 13 }}>
-      <a href="/impressum">Impressum</a>
-    </footer>
+
+      <footer style={{ marginTop: 40, fontSize: 13 }}>
+        <a href="/impressum">Impressum</a>
+      </footer>
     </main>
   );
 }
