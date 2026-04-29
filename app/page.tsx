@@ -47,7 +47,9 @@ export default function Home() {
     try {
       const response = await fetch(`${apiUrl}/recommend`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ band: query }),
         signal: controller.signal,
       });
@@ -74,39 +76,37 @@ export default function Home() {
 
   return (
     <main style={{ maxWidth: 680, margin: "0 auto", padding: 24 }}>
-      <header style={{ marginBottom: 28 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <Image
-            src="/logo.png"
-            alt="Soundcovery"
-            width={48}
-            height={48}
-            style={{ objectFit: "contain" }}
-            priority
-          />
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>
-              Your guide to Rock for People 2026
-            </h1>
-        
-          
-          </div>
-        </div>
+      {/* HEADER */}
+      <header style={{ textAlign: "center", marginBottom: 32 }}>
+        <Image
+          src="/logo.png"
+          alt="Soundcovery"
+          width={200}
+          height={100}
+          style={{ objectFit: "contain", margin: "0 auto" }}
+          priority
+        />
 
-        <p style={{ marginTop: 18 }}>
-          Enter bands you like. We&apos;ll show you the best matches from the
-          Rock for People 2026 lineup.
+        <h1 style={{ marginTop: 16, fontSize: 22 }}>
+          Find the acts you shouldn’t miss
+        </h1>
+
+        <p style={{ marginTop: 6, opacity: 0.7 }}>
+          Rock for People 2026
         </p>
       </header>
 
+      {/* INPUT */}
       <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !loading) handleSubmit();
+          if (e.key === "Enter" && !loading) {
+            handleSubmit();
+          }
         }}
         placeholder="e.g. Bring Me The Horizon; Metallica"
-        style={{ width: "100%", padding: 12, marginTop: 8 }}
+        style={{ width: "100%", padding: 12 }}
       />
 
       <button
@@ -117,11 +117,15 @@ export default function Home() {
         {loading ? "Finding..." : "Find festival acts"}
       </button>
 
+      {/* ERROR */}
       {error && <p style={{ color: "red" }}>{error}</p>}
 
+      {/* RESULTS */}
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
-          <h2 style={{ fontSize: 20 }}>Recommended festival acts</h2>
+          <h2 style={{ fontSize: 20 }}>
+            Recommended festival acts
+          </h2>
 
           {results.map((band) => (
             <article
@@ -161,6 +165,7 @@ export default function Home() {
         </section>
       )}
 
+      {/* FOOTER */}
       <footer style={{ marginTop: 40, fontSize: 13 }}>
         <a href="/impressum">Impressum</a>
       </footer>
