@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 type Recommendation = {
   name: string;
@@ -46,9 +47,7 @@ export default function Home() {
     try {
       const response = await fetch(`${apiUrl}/recommend`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ band: query }),
         signal: controller.signal,
       });
@@ -57,19 +56,16 @@ export default function Home() {
 
       if (!response.ok || data.error) {
         setError(data.error ?? "Something went wrong.");
-        setResults([]);
         return;
       }
 
       setResults(data.recommendations ?? []);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setError("This is taking longer than expected. Please try again.");
-      } else {
-        setError("Could not reach the recommendation service.");
-      }
-
-      setResults([]);
+      setError(
+        err instanceof DOMException && err.name === "AbortError"
+          ? "This is taking longer than expected. Please try again."
+          : "Could not reach the recommendation service."
+      );
     } finally {
       window.clearTimeout(timeoutId);
       setLoading(false);
@@ -77,38 +73,66 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 600, margin: "0 auto", padding: 20 }}>
-      <h1>Soundcovery</h1>
-      <p>Type a band you like. We'll suggest similar artists.</p>
+    <main style={{ maxWidth: 680, margin: "0 auto", padding: 24 }}>
+      <header style={{ marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Image
+            src="/logo.png"
+            alt="Soundcovery"
+            width={48}
+            height={48}
+            style={{ objectFit: "contain" }}
+            priority
+          />
+          <div>
+            <h1 style={{ margin: 0, fontSize: 22 }}>
+              Your guide to Rock for People 2026
+            </h1>
+        
+          
+          </div>
+        </div>
+
+        <p style={{ marginTop: 18 }}>
+          Enter bands you like. We&apos;ll show you the best matches from the
+          Rock for People 2026 lineup.
+        </p>
+      </header>
 
       <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !loading) {
-            handleSubmit();
-          }
+          if (e.key === "Enter" && !loading) handleSubmit();
         }}
-        placeholder="e.g. Bring Me The Horizon"
-        style={{ width: "100%", padding: 10, marginTop: 10 }}
+        placeholder="e.g. Bring Me The Horizon; Metallica"
+        style={{ width: "100%", padding: 12, marginTop: 8 }}
       />
 
       <button
         onClick={handleSubmit}
         disabled={loading}
-        style={{ marginTop: 10, padding: "10px 16px" }}
+        style={{ marginTop: 12, padding: "10px 16px" }}
       >
-        {loading ? "Finding..." : "Find bands"}
+        {loading ? "Finding..." : "Find festival acts"}
       </button>
 
       {error && <p style={{ color: "red" }}>{error}</p>}
 
       {results.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <h3>Recommendations</h3>
+        <section style={{ marginTop: 28 }}>
+          <h2 style={{ fontSize: 20 }}>Recommended festival acts</h2>
 
           {results.map((band) => (
-            <div key={band.name} style={{ marginBottom: 16 }}>
+            <article
+              key={band.name}
+              style={{
+                marginTop: 16,
+                padding: 16,
+                border: "1px solid #ddd",
+                borderRadius: 12,
+              }}
+            >
               <strong>{band.name}</strong>
               <p>{band.reason}</p>
 
@@ -119,22 +143,22 @@ export default function Home() {
                   rel="noopener noreferrer"
                   style={{
                     display: "inline-block",
-                    marginTop: "6px",
+                    marginTop: 6,
                     padding: "6px 12px",
                     background: "#1DB954",
                     color: "white",
-                    borderRadius: "999px",
+                    borderRadius: 999,
                     textDecoration: "none",
-                    fontSize: "13px",
+                    fontSize: 13,
                     fontWeight: 600,
                   }}
                 >
                   ▶ Open in Spotify
                 </a>
               )}
-            </div>
+            </article>
           ))}
-        </div>
+        </section>
       )}
 
       <footer style={{ marginTop: 40, fontSize: 13 }}>
