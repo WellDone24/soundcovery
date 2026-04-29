@@ -134,6 +134,9 @@ export default function Home() {
           ))}
         </div>
       )}
+    <footer style={{ marginTop: 40, fontSize: 13 }}>
+      <a href="/impressum">Impressum</a>
+    </footer>
     </main>
   );
 }
