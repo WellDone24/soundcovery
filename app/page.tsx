@@ -8,6 +8,11 @@ type Recommendation = {
   spotify_url?: string | null;
 };
 
+type ApiResponse = {
+  recommendations?: Recommendation[];
+  error?: string;
+};
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [results, setResults] = useState<Recommendation[]>([]);
@@ -15,42 +20,58 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit() {
-    if (!input.trim()) {
+    const query = input.trim();
+
+    if (!query) {
       setError("Please enter a band.");
       setResults([]);
       return;
     }
 
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+    if (!apiUrl) {
+      setError("API URL is not configured.");
+      setResults([]);
+      return;
+    }
+
     setError("");
+    setResults([]);
     setLoading(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/recommend", {
+      const response = await fetch(`${apiUrl}/recommend`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ band: input }),
+        body: JSON.stringify({ band: query }),
         signal: controller.signal,
       });
 
-      const data = await response.json();
+      const data: ApiResponse = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || data.error) {
         setError(data.error ?? "Something went wrong.");
         setResults([]);
         return;
       }
 
-      setResults(data.recommendations);
-    } catch {
-      setError("This is taking longer than expected. Please try again.");
+      setResults(data.recommendations ?? []);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("This is taking longer than expected. Please try again.");
+      } else {
+        setError("Could not reach the recommendation service.");
+      }
+
       setResults([]);
     } finally {
-      clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   }
@@ -64,7 +85,7 @@ export default function Home() {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") handleSubmit();
+          if (e.key === "Enter" && !loading) handleSubmit();
         }}
         placeholder="e.g. Bring Me The Horizon"
         style={{ width: "100%", padding: 10, marginTop: 10 }}
