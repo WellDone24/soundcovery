@@ -12,7 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DB_PATH = os.getenv(
     "DB_PATH",
-    os.path.join(BASE_DIR, "data", "saem_prod.db")
+    os.path.join(BASE_DIR, "data", "saem_prod.db"))
 
 SAEM_TABLE = "saem_run"
 ARTIST_SET_TABLE = "artist_sets"
