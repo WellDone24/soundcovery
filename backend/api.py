@@ -1,11 +1,11 @@
 import os
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import json
 from urllib.parse import urlparse
 
 import pymysql
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from recommender import get_recommendations
 
@@ -24,35 +24,79 @@ app.add_middleware(
 )
 # Origins später anpassen, wenn Frontend deployed ist
 
+
 class RecommendRequest(BaseModel):
     band: str
 
 
-# @app.get("/health")
-# def health():
-#    return {"ok": True}
+class TrackRequest(BaseModel):
+    session_id: str | None = None
+    event_type: str
+    payload: dict = {}
 
-@app.get("/health")
-def health():
+
+def get_tracking_connection():
     database_url = os.environ.get("Tracking_Database_URL")
 
     if not database_url:
-        return {
-            "ok": False,
-            "tracking": "missing env"
-        }
+        raise RuntimeError("Tracking_Database_URL missing")
+
+    parsed = urlparse(database_url)
+
+    return pymysql.connect(
+        host=parsed.hostname,
+        port=parsed.port or 3306,
+        user=parsed.username,
+        password=parsed.password,
+        database=parsed.path.lstrip("/"),
+        autocommit=True,
+    )
+
+
+def ensure_events_table():
+    conn = get_tracking_connection()
 
     try:
-        parsed = urlparse(database_url)
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS events (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    session_id VARCHAR(128),
+                    event_type VARCHAR(100) NOT NULL,
+                    payload JSON
+                );
+            """)
+    finally:
+        conn.close()
 
-        conn = pymysql.connect(
-            host=parsed.hostname,
-            port=parsed.port or 3306,
-            user=parsed.username,
-            password=parsed.password,
-            database=parsed.path.lstrip("/"),
-        )
 
+def write_event(session_id, event_type, payload):
+    ensure_events_table()
+
+    conn = get_tracking_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO events (session_id, event_type, payload)
+                VALUES (%s, %s, %s)
+                """,
+                (
+                    session_id,
+                    event_type,
+                    json.dumps(payload),
+                ),
+            )
+    finally:
+        conn.close()
+
+
+@app.get("/health")
+def health():
+    try:
+        conn = get_tracking_connection()
         conn.close()
 
         return {
@@ -80,9 +124,30 @@ def recommend(request: RecommendRequest):
 
     try:
         return get_recommendations(band)
+
     except Exception as e:
         return {
             "error": str(e),
             "recommendations": [],
             "recommendation_groups": [],
+        }
+
+
+@app.post("/track")
+def track(request: TrackRequest):
+    try:
+        write_event(
+            session_id=request.session_id,
+            event_type=request.event_type,
+            payload=request.payload,
+        )
+
+        return {
+            "ok": True
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
         }
