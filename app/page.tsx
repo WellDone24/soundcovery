@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { track } from "@/lib/tracking";
 
 type Recommendation = {
   name: string;
@@ -16,6 +17,7 @@ type ApiResponse = {
 
 export default function Home() {
   const [input, setInput] = useState("");
+  const [lastQuery, setLastQuery] = useState("");
   const [results, setResults] = useState<Recommendation[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -40,6 +42,11 @@ export default function Home() {
     setError("");
     setResults([]);
     setLoading(true);
+    setLastQuery(query);
+
+    await track("search_submitted", {
+      band: query,
+    });
 
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 20000);
@@ -62,6 +69,11 @@ export default function Home() {
       }
 
       setResults(data.recommendations ?? []);
+
+      await track("recommendations_shown", {
+        band: query,
+        count: data.recommendations?.length ?? 0,
+      });
     } catch (err) {
       setError(
         err instanceof DOMException && err.name === "AbortError"
@@ -76,7 +88,6 @@ export default function Home() {
 
   return (
     <main style={{ maxWidth: 680, margin: "0 auto", padding: 24 }}>
-      {/* HEADER */}
       <header style={{ textAlign: "center", marginBottom: 32 }}>
         <Image
           src="/logo.png"
@@ -91,12 +102,9 @@ export default function Home() {
           Find the acts you shouldn’t miss
         </h1>
 
-        <p style={{ marginTop: 6, opacity: 0.7 }}>
-          Rock for People 2026
-        </p>
+        <p style={{ marginTop: 6, opacity: 0.7 }}>Rock for People 2026</p>
       </header>
 
-      {/* INPUT */}
       <input
         value={input}
         onChange={(e) => setInput(e.target.value)}
@@ -117,15 +125,11 @@ export default function Home() {
         {loading ? "Finding..." : "Find festival acts"}
       </button>
 
-      {/* ERROR */}
       {error && <p style={{ color: "red" }}>{error}</p>}
 
-      {/* RESULTS */}
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
-          <h2 style={{ fontSize: 20 }}>
-            Recommended festival acts
-          </h2>
+          <h2 style={{ fontSize: 20 }}>Recommended festival acts</h2>
 
           {results.map((band) => (
             <article
@@ -145,6 +149,12 @@ export default function Home() {
                   href={band.spotify_url}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={() => {
+                    track("spotify_clicked", {
+                      query_band: lastQuery,
+                      recommended_band: band.name,
+                    });
+                  }}
                   style={{
                     display: "inline-block",
                     marginTop: 6,
@@ -165,7 +175,6 @@ export default function Home() {
         </section>
       )}
 
-      {/* FOOTER */}
       <footer style={{ marginTop: 40, fontSize: 13 }}>
         <a href="/impressum">Impressum</a>
       </footer>
