@@ -3,6 +3,9 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from urllib.parse import urlparse
+
+import pymysql
 
 from recommender import get_recommendations
 
@@ -31,10 +34,37 @@ class RecommendRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {
-        "ok": True,
-        "tracking_env": bool(os.environ.get("Tracking_Database_URL"))
-    }
+    database_url = os.environ.get("Tracking_Database_URL")
+
+    if not database_url:
+        return {
+            "ok": False,
+            "tracking": "missing env"
+        }
+
+    try:
+        parsed = urlparse(database_url)
+
+        conn = pymysql.connect(
+            host=parsed.hostname,
+            port=parsed.port or 3306,
+            user=parsed.username,
+            password=parsed.password,
+            database=parsed.path.lstrip("/"),
+        )
+
+        conn.close()
+
+        return {
+            "ok": True,
+            "tracking": "db connected"
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "tracking_error": str(e)
+        }
 
 
 @app.post("/recommend")
