@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -23,9 +25,16 @@ class RecommendRequest(BaseModel):
     band: str
 
 
+# @app.get("/health")
+# def health():
+#    return {"ok": True}
+
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "tracking_env": bool(os.environ.get("TRACKING_DATABASE_URL"))
+    }
 
 
 @app.post("/recommend")
