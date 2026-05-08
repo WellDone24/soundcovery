@@ -33,7 +33,7 @@ class RecommendRequest(BaseModel):
 def health():
     return {
         "ok": True,
-        "tracking_env": bool(os.environ.get("TRACKING_DATABASE_URL"))
+        "tracking_env": bool(os.environ.get("Tracking_Database_URL"))
     }
 
 
