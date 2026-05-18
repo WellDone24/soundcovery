@@ -2,19 +2,23 @@ import sys
 import json
 import sqlite3
 import os
+import re
+import unicodedata
+
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
+from rapidfuzz import process, fuzz
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DB_PATH = os.getenv(
     "DB_PATH",
-    os.path.join(BASE_DIR, "data", "saem_prod.db"))
+    os.path.join(BASE_DIR, "data", "saem_prod.db")
+)
 
-SAEM_TABLE = "saem_run"
 ARTIST_SET_TABLE = "artist_sets"
 GENRE_TABLE = "artist_genre_enrichment"
 AXIS_TEXT_TABLE = "axis_text_fragments"
@@ -34,6 +38,8 @@ UNKNOWN_GENRE_PENALTY = 10.0
 STRONG_MATCH_MAX_SCORE = 35.0
 DECENT_MATCH_MAX_SCORE = 50.0
 WEAK_MATCH_MAX_SCORE = 65.0
+
+FUZZY_MATCH_MIN_SCORE = 80
 
 
 AXIS_WEIGHTS = {
@@ -72,6 +78,75 @@ TEXT_AXIS_PRIORITY = [
 
 def split_input_artists(raw: str) -> list[str]:
     return [x.strip() for x in raw.split(";") if x.strip()]
+
+
+def normalize_artist_name(value: str) -> str:
+    value = unicodedata.normalize("NFD", value)
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+    value = value.lower()
+    value = re.sub(r"""["']""", "", value)
+    value = re.sub(r"[^\w\s]", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def fuzzy_resolve_artist_names(
+    matrix: pd.DataFrame,
+    artist_names: list[str],
+) -> tuple[list[str], list[dict]]:
+    choices = {}
+
+    for original_name in matrix["name"].dropna().astype(str).drop_duplicates():
+        original_name = original_name.strip()
+        normalized_name = normalize_artist_name(original_name)
+
+        if normalized_name:
+            choices[normalized_name] = original_name
+
+    resolved_names = []
+    matches = []
+
+    for raw_name in artist_names:
+        normalized_input = normalize_artist_name(raw_name)
+
+        match = process.extractOne(
+            normalized_input,
+            choices.keys(),
+            scorer=fuzz.token_set_ratio,
+        )
+
+        if not match:
+            resolved_names.append(raw_name)
+            matches.append({
+                "input": raw_name,
+                "matched_name": None,
+                "score": None,
+                "used_fuzzy": False,
+            })
+            continue
+
+        matched_normalized, score, _ = match
+        matched_name = choices[matched_normalized]
+
+        if score >= FUZZY_MATCH_MIN_SCORE:
+            resolved_names.append(matched_name)
+            matches.append({
+                "input": raw_name,
+                "matched_name": matched_name,
+                "score": round(float(score), 2),
+                "used_fuzzy": normalized_input != normalize_artist_name(matched_name),
+            })
+        else:
+            resolved_names.append(raw_name)
+            matches.append({
+                "input": raw_name,
+                "matched_name": matched_name,
+                "score": round(float(score), 2),
+                "used_fuzzy": False,
+            })
+
+    return resolved_names, matches
+
 
 def load_artist_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     df = pd.read_sql_query(
@@ -119,6 +194,7 @@ def load_artist_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     df[axis_cols] = df[axis_cols].apply(pd.to_numeric, errors="coerce")
 
     return df.dropna(subset=axis_cols).reset_index(drop=True)
+
 
 def load_candidate_set(conn: sqlite3.Connection) -> pd.DataFrame:
     return pd.read_sql_query(
@@ -699,7 +775,12 @@ def get_recommendations(raw_input: str) -> dict:
 
     feature_cols = get_feature_cols(matrix)
 
-    profile = resolve_input_artists(matrix, input_artists)
+    resolved_input_artists, input_artist_matches = fuzzy_resolve_artist_names(
+        matrix=matrix,
+        artist_names=input_artists,
+    )
+
+    profile = resolve_input_artists(matrix, resolved_input_artists)
     profile_mbids = set(profile["mbid"])
 
     profile, centers = build_clusters(profile, feature_cols)
@@ -739,6 +820,7 @@ def get_recommendations(raw_input: str) -> dict:
     )
 
     return {
+        "input_artist_matches": input_artist_matches,
         "recommendation_groups": groups,
         "recommendations": flat_recommendations,
     }
