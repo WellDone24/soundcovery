@@ -4,10 +4,25 @@ import { useState } from "react";
 import Image from "next/image";
 import { track } from "@/lib/tracking";
 
+type Timetable = {
+  festival?: string | null;
+  day?: string | null;
+  weekday?: string | null;
+  date?: string | null;
+  stage?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  artist_url?: string | null;
+  source_artist_name?: string | null;
+  matched_artist_name?: string | null;
+  match_status?: string | null;
+};
+
 type Recommendation = {
   name: string;
   reason: string;
   spotify_url?: string | null;
+  timetable?: Timetable | null;
 };
 
 type ApiResponse = {
@@ -143,6 +158,15 @@ export default function Home() {
             >
               <strong>{band.name}</strong>
               <p>{band.reason}</p>
+
+              {band.timetable?.start_time && (
+                <p style={{ marginTop: 8, fontSize: 14, opacity: 0.75 }}>
+                  {band.timetable.weekday && `${band.timetable.weekday} · `}
+                  {band.timetable.start_time}
+                  {band.timetable.end_time && `–${band.timetable.end_time}`}
+                  {band.timetable.stage && ` · ${band.timetable.stage}`}
+                </p>
+              )}
 
               {band.spotify_url && (
                 <a

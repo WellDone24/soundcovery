@@ -23,9 +23,10 @@ ARTIST_SET_TABLE = "artist_sets"
 GENRE_TABLE = "artist_genre_enrichment"
 AXIS_TEXT_TABLE = "axis_text_fragments"
 EXTERNAL_LINKS_TABLE = "artist_external_links"
+TIMETABLE_TABLE = "festival_timetable"
 
 CANDIDATE_SET_NAME = "rock_for_people_2026"
-CANDIDATE_SET_VERSION = "V1"
+CANDIDATE_SET_VERSION = "V2"
 
 MAX_CLUSTERS = 3
 RECS_PER_CLUSTER = 5
@@ -273,6 +274,56 @@ def load_external_links(conn: sqlite3.Connection) -> pd.DataFrame:
     return df.drop_duplicates(subset=["mbid"]).copy()
 
 
+def load_timetable(conn: sqlite3.Connection) -> pd.DataFrame:
+    df = pd.read_sql_query(
+        f"""
+        SELECT
+            TRIM(mbid) AS mbid,
+            festival,
+            day,
+            weekday,
+            date,
+            stage,
+            source_artist_name,
+            matched_artist_name,
+            start_time,
+            end_time,
+            artist_url,
+            is_placeholder,
+            match_status
+        FROM {TIMETABLE_TABLE}
+        WHERE set_name = ?
+          AND set_version = ?
+          AND mbid IS NOT NULL
+          AND TRIM(mbid) != ''
+        """,
+        conn,
+        params=[CANDIDATE_SET_NAME, CANDIDATE_SET_VERSION],
+    )
+
+    if df.empty:
+        return pd.DataFrame(columns=[
+            "mbid",
+            "festival",
+            "day",
+            "weekday",
+            "date",
+            "stage",
+            "source_artist_name",
+            "matched_artist_name",
+            "start_time",
+            "end_time",
+            "artist_url",
+            "is_placeholder",
+            "match_status",
+        ])
+
+    # For now: one timetable entry per artist.
+    # If artists can play multiple sets later, change this to aggregate a list.
+    df = df.sort_values(["date", "start_time", "stage"], na_position="last")
+    return df.drop_duplicates(subset=["mbid"], keep="first").copy()
+
+
 def load_axis_text_fragments(conn: sqlite3.Connection) -> dict[tuple[str, str, str], str]:
     rows = conn.execute(
         f"""
@@ -295,6 +346,19 @@ def get_feature_cols(df: pd.DataFrame) -> list[str]:
         "candidate_name",
         "primary_genre",
         "spotify_url",
+
+        "festival",
+        "day",
+        "weekday",
+        "date",
+        "stage",
+        "source_artist_name",
+        "matched_artist_name",
+        "start_time",
+        "end_time",
+        "artist_url",
+        "is_placeholder",
+        "match_status",
     }
     return [c for c in df.columns if c not in non_features]
 
@@ -660,6 +724,12 @@ def pick_top_per_cluster(scored: pd.DataFrame, n_clusters: int) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def none_if_nan(value):
+    if pd.isna(value):
+        return None
+    return value
+
+
 def build_recommendation_dict(
     row: pd.Series,
     centers: pd.DataFrame,
@@ -702,6 +772,19 @@ def build_recommendation_dict(
         "support_artist": support,
         "primary_genre": genre,
         "spotify_url": spotify_url if pd.notna(spotify_url) else None,
+        "timetable": {
+            "festival": none_if_nan(row.get("festival")),
+            "day": none_if_nan(row.get("day")),
+            "weekday": none_if_nan(row.get("weekday")),
+            "date": none_if_nan(row.get("date")),
+            "stage": none_if_nan(row.get("stage")),
+            "start_time": none_if_nan(row.get("start_time")),
+            "end_time": none_if_nan(row.get("end_time")),
+            "artist_url": none_if_nan(row.get("artist_url")),
+            "source_artist_name": none_if_nan(row.get("source_artist_name")),
+            "matched_artist_name": none_if_nan(row.get("matched_artist_name")),
+            "match_status": none_if_nan(row.get("match_status")),
+        },
     }
 
 
@@ -760,10 +843,12 @@ def get_recommendations(raw_input: str) -> dict:
         candidate_set = load_candidate_set(conn)
         genres = load_genres(conn)
         external_links = load_external_links(conn)
+        timetable = load_timetable(conn)
         axis_fragments = load_axis_text_fragments(conn)
 
     matrix = matrix.merge(genres, on="mbid", how="left")
     matrix = matrix.merge(external_links, on="mbid", how="left")
+    matrix = matrix.merge(timetable, on="mbid", how="left")
 
     matrix["primary_genre"] = (
         matrix["primary_genre"]
