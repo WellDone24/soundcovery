@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Image from "next/image";
 import { track } from "@/lib/tracking";
 
@@ -36,8 +36,11 @@ export default function Home() {
   const [results, setResults] = useState<Recommendation[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit() {
+    inputRef.current?.blur();
+
     const query = input.trim();
 
     if (!query) {
@@ -102,8 +105,8 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 680, margin: "0 auto", padding: 24 }}>
-      <header style={{ textAlign: "center", marginBottom: 32 }}>
+    <main style={{ maxWidth: 680, margin: "0 auto", padding: "16px 24px 24px" }}>
+      <header style={{ textAlign: "center", marginBottom: 24 }}>
         <Image
           src="/HeroLogoSVG.svg"
           alt="Soundcovery"
@@ -113,7 +116,7 @@ export default function Home() {
           priority
         />
 
-        <h1 style={{ marginTop: 16, fontSize: 22 }}>
+        <h1 style={{ marginTop: 10, fontSize: 22 }}>
           find the acts you shouldn’t miss
         </h1>
 
@@ -121,6 +124,7 @@ export default function Home() {
       </header>
 
       <input
+        ref={inputRef}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
@@ -128,19 +132,42 @@ export default function Home() {
             handleSubmit();
           }
         }}
-        placeholder="e.g. Bring Me The Horizon; Metallica"
-        style={{ width: "100%", padding: 12 }}
+        placeholder="Try: Bring Me The Horizon, Spiritbox, Sleep Token"
+        style={{
+          width: "100%",
+          padding: "16px 18px",
+          borderRadius: 16,
+          border: "1px solid #444",
+          background: "#111",
+          color: "#fff",
+          fontSize: 16,
+          outline: "none",
+          boxSizing: "border-box",
+          caretColor: "#fff",
+        }}
       />
 
       <button
         onClick={handleSubmit}
         disabled={loading}
-        style={{ marginTop: 12, padding: "10px 16px" }}
+        style={{
+          marginTop: 14,
+          width: "100%",
+          padding: "15px 18px",
+          borderRadius: 16,
+          border: "none",
+          background: "#fff",
+          color: "#000",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: loading ? "not-allowed" : "pointer",
+          opacity: loading ? 0.7 : 1,
+        }}
       >
         {loading ? "Finding..." : "Find festival acts"}
       </button>
 
-      {error && <p style={{ color: "red" }}>{error}</p>}
+      {error && <p style={{ color: "#ff6b6b", marginTop: 12 }}>{error}</p>}
 
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
@@ -152,8 +179,9 @@ export default function Home() {
               style={{
                 marginTop: 16,
                 padding: 16,
-                border: "1px solid #ddd",
-                borderRadius: 12,
+                border: "1px solid #333",
+                borderRadius: 16,
+                background: "#0f0f0f",
               }}
             >
               <strong>{band.name}</strong>
@@ -163,7 +191,8 @@ export default function Home() {
                 <p style={{ marginTop: 8, fontSize: 14, opacity: 0.75 }}>
                   {band.timetable.weekday && `${band.timetable.weekday} · `}
                   {band.timetable.start_time?.slice(0, 5)}
-                  {band.timetable.end_time && `–${band.timetable.end_time.slice(0, 5)}`}
+                  {band.timetable.end_time &&
+                    `–${band.timetable.end_time.slice(0, 5)}`}
                   {band.timetable.stage && ` · ${band.timetable.stage}`}
                 </p>
               )}
