@@ -105,7 +105,7 @@ export default function Home() {
     <main style={{ maxWidth: 680, margin: "0 auto", padding: 24 }}>
       <header style={{ textAlign: "center", marginBottom: 32 }}>
         <Image
-          src="/logo.png"
+          src="/HeroLogoSVG.svg"
           alt="Soundcovery"
           width={200}
           height={100}
@@ -114,7 +114,7 @@ export default function Home() {
         />
 
         <h1 style={{ marginTop: 16, fontSize: 22 }}>
-          Find the acts you shouldn’t miss
+          find the acts you shouldn’t miss
         </h1>
 
         <p style={{ marginTop: 6, opacity: 0.7 }}>Rock for People 2026</p>
@@ -144,7 +144,7 @@ export default function Home() {
 
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
-          <h2 style={{ fontSize: 20 }}>Recommended festival acts</h2>
+          <h2 style={{ fontSize: 20 }}>check these out</h2>
 
           {results.map((band) => (
             <article
@@ -162,8 +162,8 @@ export default function Home() {
               {band.timetable?.start_time && (
                 <p style={{ marginTop: 8, fontSize: 14, opacity: 0.75 }}>
                   {band.timetable.weekday && `${band.timetable.weekday} · `}
-                  {band.timetable.start_time}
-                  {band.timetable.end_time && `–${band.timetable.end_time}`}
+                  {band.timetable.start_time?.slice(0, 5)}
+                  {band.timetable.end_time && `–${band.timetable.end_time.slice(0, 5)}`}
                   {band.timetable.stage && ` · ${band.timetable.stage}`}
                 </p>
               )}
@@ -199,7 +199,7 @@ export default function Home() {
         </section>
       )}
 
-      <footer style={{ marginTop: 40, fontSize: 13 }}>
+      <footer style={{ marginTop: 40, fontSize: 12 }}>
         <a href="/impressum">Impressum</a>
       </footer>
     </main>
