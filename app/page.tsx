@@ -107,8 +107,8 @@ export default function Home() {
         <Image
           src="/HeroLogoSVG.svg"
           alt="Soundcovery"
-          width={200}
-          height={100}
+          width={300}
+          height={150}
           style={{ objectFit: "contain", margin: "0 auto" }}
           priority
         />
