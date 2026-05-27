@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { track } from "@/lib/tracking";
 
@@ -30,13 +30,43 @@ type ApiResponse = {
   error?: string;
 };
 
+type TrackingContext = {
+  traffic_source: string;
+  utm_source: string | null;
+  path: string;
+  search: string;
+  referrer: string | null;
+};
+
+function getTrackingContext(): TrackingContext {
+  const params = new URLSearchParams(window.location.search);
+  const utmSource = params.get("utm_source");
+
+  return {
+    traffic_source: utmSource ?? "organic",
+    utm_source: utmSource,
+    path: window.location.pathname,
+    search: window.location.search,
+    referrer: document.referrer || null,
+  };
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const [results, setResults] = useState<Recommendation[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
+  const trackingContextRef = useRef<TrackingContext | null>(null);
+
+  useEffect(() => {
+    const context = getTrackingContext();
+    trackingContextRef.current = context;
+
+    track("page_view", context);
+  }, []);
 
   async function handleSubmit() {
     inputRef.current?.blur();
@@ -57,6 +87,9 @@ export default function Home() {
       return;
     }
 
+    const trackingContext =
+      trackingContextRef.current ?? getTrackingContext();
+
     setError("");
     setResults([]);
     setLoading(true);
@@ -64,6 +97,7 @@ export default function Home() {
 
     await track("search_submitted", {
       band: query,
+      ...trackingContext,
     });
 
     const controller = new AbortController();
@@ -82,22 +116,40 @@ export default function Home() {
       const data: ApiResponse = await response.json();
 
       if (!response.ok || data.error) {
-        setError(data.error ?? "Something went wrong.");
+        const message = data.error ?? "Something went wrong.";
+
+        setError(message);
+
+        await track("search_failed", {
+          band: query,
+          error: message,
+          ...trackingContext,
+        });
+
         return;
       }
 
-      setResults(data.recommendations ?? []);
+      const recommendations = data.recommendations ?? [];
+      setResults(recommendations);
 
       await track("recommendations_shown", {
         band: query,
-        count: data.recommendations?.length ?? 0,
+        count: recommendations.length,
+        ...trackingContext,
       });
     } catch (err) {
-      setError(
+      const message =
         err instanceof DOMException && err.name === "AbortError"
           ? "This is taking longer than expected. Please try again."
-          : "Could not reach the recommendation service."
-      );
+          : "Could not reach the recommendation service.";
+
+      setError(message);
+
+      await track("search_failed", {
+        band: query,
+        error: message,
+        ...trackingContext,
+      });
     } finally {
       window.clearTimeout(timeoutId);
       setLoading(false);
@@ -105,14 +157,23 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 680, margin: "0 auto", padding: "16px 24px 24px" }}>
+    <main
+      style={{
+        maxWidth: 680,
+        margin: "0 auto",
+        padding: "16px 24px 24px",
+      }}
+    >
       <header style={{ textAlign: "center", marginBottom: 24 }}>
         <Image
           src="/HeroLogoSVG.svg"
           alt="Soundcovery"
           width={300}
           height={150}
-          style={{ objectFit: "contain", margin: "0 auto" }}
+          style={{
+            objectFit: "contain",
+            margin: "0 auto",
+          }}
           priority
         />
 
@@ -120,7 +181,9 @@ export default function Home() {
           find the acts you shouldn’t miss
         </h1>
 
-        <p style={{ marginTop: 6, opacity: 0.7 }}>Rock for People 2026</p>
+        <p style={{ marginTop: 6, opacity: 0.7 }}>
+          Rock for People 2026
+        </p>
       </header>
 
       <input
@@ -167,7 +230,11 @@ export default function Home() {
         {loading ? "Finding..." : "Find festival acts"}
       </button>
 
-      {error && <p style={{ color: "#ff6b6b", marginTop: 12 }}>{error}</p>}
+      {error && (
+        <p style={{ color: "#ff6b6b", marginTop: 12 }}>
+          {error}
+        </p>
+      )}
 
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
@@ -185,12 +252,19 @@ export default function Home() {
               }}
             >
               <strong>{band.name}</strong>
+
               <p>{band.reason}</p>
 
               {band.timetable?.start_time && (
-                <p style={{ marginTop: 8, fontSize: 14, opacity: 0.75 }}>
+                <p
+                  style={{
+                    marginTop: 8,
+                    fontSize: 14,
+                    opacity: 0.75,
+                  }}
+                >
                   {band.timetable.weekday && `${band.timetable.weekday} · `}
-                  {band.timetable.start_time?.slice(0, 5)}
+                  {band.timetable.start_time.slice(0, 5)}
                   {band.timetable.end_time &&
                     `–${band.timetable.end_time.slice(0, 5)}`}
                   {band.timetable.stage && ` · ${band.timetable.stage}`}
@@ -203,9 +277,13 @@ export default function Home() {
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => {
+                    const trackingContext =
+                      trackingContextRef.current ?? getTrackingContext();
+
                     track("spotify_clicked", {
                       query_band: lastQuery,
                       recommended_band: band.name,
+                      ...trackingContext,
                     });
                   }}
                   style={{
