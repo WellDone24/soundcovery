@@ -71,14 +71,54 @@ function getResultsHeadline(timeFilter: TimeFilter): string {
 
 function getEmptyMessage(timeFilter: TimeFilter): string {
   if (timeFilter === "upcoming") {
-    return "No matching acts still to play. Try all days.";
+    return "No strong matches still to play. Try all days.";
   }
 
   if (timeFilter === "today") {
-    return "No matching acts today. Try still to play or all days.";
+    return "No strong matches today. Try still to play.";
   }
 
-  return "No matching acts found.";
+  return "Couldn’t find good matches for that search.";
+}
+
+function getUserFacingErrorMessage(error?: string): string {
+  if (!error) {
+    return "Could not load recommendations right now.";
+  }
+
+  const normalized = error.toLowerCase();
+
+  if (
+    normalized.includes("input artist not found") ||
+    normalized.includes("not found in saem data")
+  ) {
+    return "That artist is not in the current dataset yet.";
+  }
+
+  if (
+    normalized.includes("input artist is ambiguous") ||
+    normalized.includes("ambiguous")
+  ) {
+    return "Multiple artists matched that name. Try a more specific search.";
+  }
+
+  if (
+    normalized.includes("no input artists provided") ||
+    normalized.includes("band is required")
+  ) {
+    return "Start with an artist you like.";
+  }
+
+  if (
+    normalized.includes("no candidates with saem vectors") ||
+    normalized.includes("no saem data") ||
+    normalized.includes("artist_axis_vectors") ||
+    normalized.includes("mbid")
+  ) {
+    return "No recommendations available right now.";
+  }
+
+  return "Could not load recommendations right now.";
 }
 
 export default function Home() {
@@ -106,7 +146,7 @@ export default function Home() {
     const query = input.trim();
 
     if (!query) {
-      setError("Please enter a band.");
+      setError("Start with an artist you like.");
       setResults([]);
       setHasSearched(false);
       return;
@@ -159,15 +199,17 @@ export default function Home() {
       const data: ApiResponse = await response.json();
 
       if (!response.ok || data.error) {
-        const message = data.error ?? "Something went wrong.";
+        const rawMessage = data.error ?? "Something went wrong.";
+        const userMessage = getUserFacingErrorMessage(rawMessage);
 
-        setError(message);
+        setError(userMessage);
 
         await track("search_failed", {
           band: query,
           time_filter: timeFilter,
           now,
-          error: message,
+          error: rawMessage,
+          user_error: userMessage,
           ...trackingContext,
         });
 
@@ -187,8 +229,8 @@ export default function Home() {
     } catch (err) {
       const message =
         err instanceof DOMException && err.name === "AbortError"
-          ? "This is taking longer than expected. Please try again."
-          : "Could not reach the recommendation service.";
+          ? "This is taking a bit longer than expected."
+          : "Could not load recommendations right now.";
 
       setError(message);
 
@@ -402,7 +444,7 @@ export default function Home() {
       )}
 
       <footer style={{ marginTop: 40, fontSize: 12 }}>
-        <a href="/impressum">Impressum</a>
+        <a href="/imprint">Imprint</a>
       </footer>
     </main>
   );
