@@ -82,9 +82,7 @@ function getEmptyMessage(timeFilter: TimeFilter): string {
 }
 
 function getUserFacingErrorMessage(error?: string): string {
-  if (!error) {
-    return "Could not load recommendations right now.";
-  }
+  if (!error) return "Could not load recommendations right now.";
 
   const normalized = error.toLowerCase();
 
@@ -161,9 +159,7 @@ export default function Home() {
       return;
     }
 
-    const trackingContext =
-      trackingContextRef.current ?? getTrackingContext();
-
+    const trackingContext = trackingContextRef.current ?? getTrackingContext();
     const now = getClientNowIso();
 
     setError("");
@@ -252,15 +248,15 @@ export default function Home() {
       style={{
         maxWidth: 680,
         margin: "0 auto",
-        padding: "16px 24px 24px",
+        padding: "12px 24px 24px",
       }}
     >
-      <header style={{ textAlign: "center", marginBottom: 24 }}>
+      <header style={{ textAlign: "center", marginBottom: 18 }}>
         <Image
           src="/HeroLogoSVG.svg"
           alt="Soundcovery"
-          width={300}
-          height={150}
+          width={285}
+          height={143}
           style={{
             objectFit: "contain",
             margin: "0 auto",
@@ -268,11 +264,11 @@ export default function Home() {
           priority
         />
 
-        <h1 style={{ marginTop: 10, fontSize: 22 }}>
+        <h1 style={{ marginTop: 4, fontSize: 22 }}>
           find the acts you shouldn’t miss
         </h1>
 
-        <p style={{ marginTop: 6, opacity: 0.7 }}>
+        <p style={{ marginTop: 4, opacity: 0.7 }}>
           Rock for People 2026
         </p>
       </header>
@@ -387,25 +383,41 @@ export default function Home() {
                 background: "#0f0f0f",
               }}
             >
-              <strong>{band.name}</strong>
-
-              <p>{band.reason}</p>
+              <strong
+                style={{
+                  display: "block",
+                  fontSize: 18,
+                  lineHeight: 1.2,
+                  marginBottom: 6,
+                }}
+              >
+                {band.name}
+              </strong>
 
               {band.timetable?.start_time && (
                 <p
                   style={{
-                    marginTop: 8,
+                    marginTop: 0,
+                    marginBottom: 10,
                     fontSize: 14,
                     opacity: 0.75,
                   }}
                 >
-                  {band.timetable.weekday && `${band.timetable.weekday} · `}
+                  {band.timetable.weekday && (
+                    <strong style={{ opacity: 0.95 }}>
+                      {band.timetable.weekday} ·{" "}
+                    </strong>
+                  )}
                   {band.timetable.start_time.slice(0, 5)}
                   {band.timetable.end_time &&
                     `–${band.timetable.end_time.slice(0, 5)}`}
                   {band.timetable.stage && ` · ${band.timetable.stage}`}
                 </p>
               )}
+
+              <p style={{ marginTop: 0 }}>
+                {band.reason}
+              </p>
 
               {band.spotify_url && (
                 <a
@@ -435,7 +447,7 @@ export default function Home() {
                     fontWeight: 600,
                   }}
                 >
-                  ▶ Open in Spotify
+                  ▶ Listen on Spotify
                 </a>
               )}
             </article>
