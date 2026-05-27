@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { track } from "@/lib/tracking";
 
+type TimeFilter = "upcoming" | "all" | "today";
+
 type Timetable = {
   festival?: string | null;
   day?: string | null;
@@ -38,6 +40,12 @@ type TrackingContext = {
   referrer: string | null;
 };
 
+const TIME_FILTER_OPTIONS: { value: TimeFilter; label: string }[] = [
+  { value: "upcoming", label: "Still to play" },
+  { value: "all", label: "All days" },
+  { value: "today", label: "Today" },
+];
+
 function getTrackingContext(): TrackingContext {
   const params = new URLSearchParams(window.location.search);
   const utmSource = params.get("utm_source");
@@ -51,12 +59,36 @@ function getTrackingContext(): TrackingContext {
   };
 }
 
+function getClientNowIso(): string {
+  return new Date().toISOString();
+}
+
+function getResultsHeadline(timeFilter: TimeFilter): string {
+  if (timeFilter === "upcoming") return "still to play";
+  if (timeFilter === "today") return "playing today";
+  return "check these out";
+}
+
+function getEmptyMessage(timeFilter: TimeFilter): string {
+  if (timeFilter === "upcoming") {
+    return "No matching acts still to play. Try all days.";
+  }
+
+  if (timeFilter === "today") {
+    return "No matching acts today. Try still to play or all days.";
+  }
+
+  return "No matching acts found.";
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const [results, setResults] = useState<Recommendation[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("upcoming");
+  const [hasSearched, setHasSearched] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const trackingContextRef = useRef<TrackingContext | null>(null);
@@ -76,6 +108,7 @@ export default function Home() {
     if (!query) {
       setError("Please enter a band.");
       setResults([]);
+      setHasSearched(false);
       return;
     }
 
@@ -84,19 +117,25 @@ export default function Home() {
     if (!apiUrl) {
       setError("API URL is not configured.");
       setResults([]);
+      setHasSearched(false);
       return;
     }
 
     const trackingContext =
       trackingContextRef.current ?? getTrackingContext();
 
+    const now = getClientNowIso();
+
     setError("");
     setResults([]);
     setLoading(true);
     setLastQuery(query);
+    setHasSearched(true);
 
     await track("search_submitted", {
       band: query,
+      time_filter: timeFilter,
+      now,
       ...trackingContext,
     });
 
@@ -109,7 +148,11 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ band: query }),
+        body: JSON.stringify({
+          band: query,
+          time_filter: timeFilter,
+          now,
+        }),
         signal: controller.signal,
       });
 
@@ -122,6 +165,8 @@ export default function Home() {
 
         await track("search_failed", {
           band: query,
+          time_filter: timeFilter,
+          now,
           error: message,
           ...trackingContext,
         });
@@ -134,6 +179,8 @@ export default function Home() {
 
       await track("recommendations_shown", {
         band: query,
+        time_filter: timeFilter,
+        now,
         count: recommendations.length,
         ...trackingContext,
       });
@@ -147,6 +194,8 @@ export default function Home() {
 
       await track("search_failed", {
         band: query,
+        time_filter: timeFilter,
+        now,
         error: message,
         ...trackingContext,
       });
@@ -210,6 +259,43 @@ export default function Home() {
         }}
       />
 
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginTop: 12,
+          overflowX: "auto",
+          paddingBottom: 2,
+        }}
+      >
+        {TIME_FILTER_OPTIONS.map((option) => {
+          const active = timeFilter === option.value;
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setTimeFilter(option.value)}
+              disabled={loading}
+              style={{
+                flex: "0 0 auto",
+                padding: "9px 13px",
+                borderRadius: 999,
+                border: active ? "1px solid #fff" : "1px solid #333",
+                background: active ? "#fff" : "#111",
+                color: active ? "#000" : "#fff",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.7 : 1,
+              }}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+
       <button
         onClick={handleSubmit}
         disabled={loading}
@@ -236,13 +322,21 @@ export default function Home() {
         </p>
       )}
 
+      {!loading && hasSearched && !error && results.length === 0 && (
+        <p style={{ marginTop: 18, opacity: 0.75 }}>
+          {getEmptyMessage(timeFilter)}
+        </p>
+      )}
+
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
-          <h2 style={{ fontSize: 20 }}>check these out</h2>
+          <h2 style={{ fontSize: 20 }}>
+            {getResultsHeadline(timeFilter)}
+          </h2>
 
           {results.map((band) => (
             <article
-              key={band.name}
+              key={`${band.name}-${band.timetable?.date ?? ""}-${band.timetable?.start_time ?? ""}`}
               style={{
                 marginTop: 16,
                 padding: 16,
@@ -283,6 +377,7 @@ export default function Home() {
                     track("spotify_clicked", {
                       query_band: lastQuery,
                       recommended_band: band.name,
+                      time_filter: timeFilter,
                       ...trackingContext,
                     });
                   }}

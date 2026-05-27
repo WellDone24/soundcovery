@@ -8,14 +8,17 @@ export default function Impressum() {
         lineHeight: 1.6,
       }}
     >
-      <h1 style={{ fontSize: 32, marginBottom: 8 }}>Impressum</h1>
+      <h1 style={{ fontSize: 32, marginBottom: 8 }}>
+        Legal Notice / Imprint
+      </h1>
 
       <p style={{ opacity: 0.75, marginBottom: 32 }}>
-        Angaben gemäß § 5 DDG
+        Information pursuant to Section 5 DDG (German Digital Services Act)
       </p>
 
       <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Anbieter</h2>
+        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Provider</h2>
+
         <p>
           Well Done Decisions GmbH
           <br />
@@ -23,19 +26,23 @@ export default function Impressum() {
           <br />
           22305 Hamburg
           <br />
-          Deutschland
+          Germany
         </p>
       </section>
 
       <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Vertreten durch</h2>
+        <h2 style={{ fontSize: 20, marginBottom: 8 }}>
+          Represented by
+        </h2>
+
         <p>Heinrich Burlage</p>
       </section>
 
       <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Kontakt</h2>
+        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Contact</h2>
+
         <p>
-          E-Mail:{" "}
+          Email:{" "}
           <a href="mailto:get.it.well.done@welldonedecisions.com">
             get.it.well.done@welldonedecisions.com
           </a>
@@ -43,20 +50,24 @@ export default function Impressum() {
       </section>
 
       <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Registereintrag</h2>
+        <h2 style={{ fontSize: 20, marginBottom: 8 }}>
+          Commercial Register
+        </h2>
+
         <p>
-          Eintragung im Handelsregister
+          Registered in the Commercial Register
           <br />
-          Registergericht: Amtsgericht Hamburg
+          Register Court: Local Court Hamburg
           <br />
-          Registernummer: HRB 185654
+          Registration Number: HRB 185654
         </p>
       </section>
 
       <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Umsatzsteuer-ID</h2>
+        <h2 style={{ fontSize: 20, marginBottom: 8 }}>VAT ID</h2>
+
         <p>
-          Umsatzsteuer-Identifikationsnummer gemäß § 27 a Umsatzsteuergesetz:
+          VAT identification number pursuant to Section 27a German VAT Act:
           <br />
           DE369011535
         </p>
@@ -64,12 +75,13 @@ export default function Impressum() {
 
       <section style={{ marginBottom: 40 }}>
         <h2 style={{ fontSize: 20, marginBottom: 8 }}>
-          Verantwortlich für den Inhalt
+          Responsible for Content
         </h2>
+
         <p>
           Heinrich Burlage
           <br />
-          Anschrift wie oben
+          Address as stated above
         </p>
       </section>
 
@@ -82,31 +94,32 @@ export default function Impressum() {
       />
 
       <section>
-        <h1 style={{ fontSize: 28, marginBottom: 8 }}>Datenschutzhinweis</h1>
+        <h1 style={{ fontSize: 28, marginBottom: 8 }}>
+          Privacy Notice
+        </h1>
 
         <p>
-          Soundcovery verwendet ein minimales technisches Event-Tracking, um zu
-          verstehen, ob der Dienst funktioniert und verbessert werden kann.
+          Soundcovery uses minimal technical event tracking in order to
+          understand how the service is used and how it can be improved.
         </p>
 
         <p>
-          Dabei können eine zufällig erzeugte Session-ID, die Herkunft des
-          Aufrufs, zum Beispiel QR-Code, Instagram oder organischer Aufruf,
-          eingegebene Suchanfragen, angezeigte Empfehlungen, Klicks auf
-          Spotify-Links sowie Zeitstempel gespeichert werden.
+          This may include a randomly generated session ID, the traffic source
+          of the visit such as QR code, Instagram or organic access, submitted
+          search queries, displayed recommendations, Spotify link clicks and
+          timestamps.
         </p>
 
         <p>
-          Es werden keine Nutzerkonten, Namen, E-Mail-Adressen,
-          Zahlungsinformationen oder präzisen Standortdaten erhoben. Es werden
-          keine Werbe-Pixel wie Meta Pixel oder Google Analytics eingesetzt und
-          die Daten werden nicht verkauft.
+          No user accounts, names, email addresses, payment information or
+          precise location data are collected. No advertising pixels such as
+          Meta Pixel or Google Analytics are used and no data is sold.
         </p>
 
         <p>
-          Die Verarbeitung erfolgt ausschließlich zur technischen Analyse,
-          Verbesserung und Bewertung des Produktes. Bei Fragen zum Datenschutz genügt
-          eine E-Mail an{" "}
+          The processing is carried out solely for technical analysis,
+          improvement and evaluation of the product. If you have any questions
+          regarding privacy or data processing, please contact{" "}
           <a href="mailto:get.it.well.done@welldonedecisions.com">
             get.it.well.done@welldonedecisions.com
           </a>

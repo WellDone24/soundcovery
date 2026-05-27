@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import pymysql
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from recommender import get_recommendations
 
@@ -15,9 +15,7 @@ app = FastAPI(title="Soundcovery Recommender API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,12 +25,15 @@ app.add_middleware(
 
 class RecommendRequest(BaseModel):
     band: str
+    time_filter: str = "upcoming"
+    selected_date: str | None = None
+    now: str | None = None
 
 
 class TrackRequest(BaseModel):
     session_id: str | None = None
     event_type: str
-    payload: dict = {}
+    payload: dict = Field(default_factory=dict)
 
 
 def get_tracking_connection():
@@ -101,13 +102,13 @@ def health():
 
         return {
             "ok": True,
-            "tracking": "db connected"
+            "tracking": "db connected",
         }
 
     except Exception as e:
         return {
             "ok": False,
-            "tracking_error": str(e)
+            "tracking_error": str(e),
         }
 
 
@@ -120,16 +121,25 @@ def recommend(request: RecommendRequest):
             "error": "Band is required.",
             "recommendations": [],
             "recommendation_groups": [],
+            "time_filter": request.time_filter,
+            "selected_date": request.selected_date,
         }
 
     try:
-        return get_recommendations(band)
+        return get_recommendations(
+            raw_input=band,
+            time_filter=request.time_filter,
+            selected_date=request.selected_date,
+            now=request.now,
+        )
 
     except Exception as e:
         return {
             "error": str(e),
             "recommendations": [],
             "recommendation_groups": [],
+            "time_filter": request.time_filter,
+            "selected_date": request.selected_date,
         }
 
 
@@ -143,11 +153,11 @@ def track(request: TrackRequest):
         )
 
         return {
-            "ok": True
+            "ok": True,
         }
 
     except Exception as e:
         return {
             "ok": False,
-            "error": str(e)
+            "error": str(e),
         }

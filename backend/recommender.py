@@ -4,6 +4,7 @@ import sqlite3
 import os
 import re
 import unicodedata
+from datetime import datetime, date as date_cls, time as time_cls, timedelta
 
 import numpy as np
 import pandas as pd
@@ -41,6 +42,11 @@ DECENT_MATCH_MAX_SCORE = 50.0
 WEAK_MATCH_MAX_SCORE = 65.0
 
 FUZZY_MATCH_MIN_SCORE = 80
+
+NIGHT_CUTOFF_HOUR = 6
+DEFAULT_SET_DURATION_MINUTES = 45
+
+VALID_TIME_FILTERS = {"all", "upcoming", "today", "date"}
 
 
 AXIS_WEIGHTS = {
@@ -318,8 +324,6 @@ def load_timetable(conn: sqlite3.Connection) -> pd.DataFrame:
             "match_status",
         ])
 
-    # For now: one timetable entry per artist.
-    # If artists can play multiple sets later, change this to aggregate a list.
     df = df.sort_values(["date", "start_time", "stage"], na_position="last")
     return df.drop_duplicates(subset=["mbid"], keep="first").copy()
 
@@ -359,6 +363,10 @@ def get_feature_cols(df: pd.DataFrame) -> list[str]:
         "artist_url",
         "is_placeholder",
         "match_status",
+
+        "performance_start_dt",
+        "performance_end_dt",
+        "festival_day",
     }
     return [c for c in df.columns if c not in non_features]
 
@@ -623,6 +631,158 @@ def cluster_contexts(candidates: pd.DataFrame, profile: pd.DataFrame) -> dict[in
     return result
 
 
+def parse_time_value(value) -> time_cls | None:
+    if pd.isna(value):
+        return None
+
+    text = str(value).strip()
+
+    if not text:
+        return None
+
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+
+    return None
+
+
+def parse_festival_date(value) -> date_cls | None:
+    if pd.isna(value):
+        return None
+
+    text = str(value).strip()
+
+    if not text:
+        return None
+
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def parse_now(value: str | None) -> datetime:
+    if not value:
+        return datetime.now()
+
+    text = str(value).strip()
+
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.now()
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+
+    return parsed
+
+
+def get_current_festival_day(now_dt: datetime) -> date_cls:
+    if now_dt.time() < time_cls(NIGHT_CUTOFF_HOUR, 0):
+        return now_dt.date() - timedelta(days=1)
+
+    return now_dt.date()
+
+
+def build_performance_datetimes_for_row(row: pd.Series) -> tuple[datetime | None, datetime | None, date_cls | None]:
+    festival_day = parse_festival_date(row.get("date"))
+    start_t = parse_time_value(row.get("start_time"))
+    end_t = parse_time_value(row.get("end_time"))
+
+    if festival_day is None or start_t is None:
+        return None, None, festival_day
+
+    start_date = festival_day
+
+    if start_t < time_cls(NIGHT_CUTOFF_HOUR, 0):
+        start_date = festival_day + timedelta(days=1)
+
+    start_dt = datetime.combine(start_date, start_t)
+
+    if end_t is None:
+        end_dt = start_dt + timedelta(minutes=DEFAULT_SET_DURATION_MINUTES)
+        return start_dt, end_dt, festival_day
+
+    end_date = festival_day
+
+    if end_t < time_cls(NIGHT_CUTOFF_HOUR, 0):
+        end_date = festival_day + timedelta(days=1)
+
+    end_dt = datetime.combine(end_date, end_t)
+
+    if end_dt <= start_dt:
+        end_dt = end_dt + timedelta(days=1)
+
+    return start_dt, end_dt, festival_day
+
+
+def add_performance_datetimes(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+
+    starts = []
+    ends = []
+    festival_days = []
+
+    for _, row in out.iterrows():
+        start_dt, end_dt, festival_day = build_performance_datetimes_for_row(row)
+        starts.append(start_dt)
+        ends.append(end_dt)
+        festival_days.append(festival_day)
+
+    out["performance_start_dt"] = starts
+    out["performance_end_dt"] = ends
+    out["festival_day"] = festival_days
+
+    return out
+
+
+def apply_time_filter(
+    candidates: pd.DataFrame,
+    time_filter: str = "upcoming",
+    selected_date: str | None = None,
+    now: str | None = None,
+) -> pd.DataFrame:
+    normalized_filter = (time_filter or "upcoming").strip().lower()
+
+    if normalized_filter not in VALID_TIME_FILTERS:
+        normalized_filter = "upcoming"
+
+    if normalized_filter == "all":
+        return candidates.copy()
+
+    out = add_performance_datetimes(candidates)
+    now_dt = parse_now(now)
+
+    if normalized_filter == "upcoming":
+        return out[
+            out["performance_end_dt"].notna()
+            & (out["performance_end_dt"] >= now_dt)
+        ].copy()
+
+    if normalized_filter in {"today", "date"}:
+        if selected_date:
+            target_day = parse_festival_date(selected_date)
+        else:
+            target_day = get_current_festival_day(now_dt)
+
+        if target_day is None:
+            return out.iloc[0:0].copy()
+
+        return out[
+            out["festival_day"].notna()
+            & (out["festival_day"] == target_day)
+        ].copy()
+
+    return out.copy()
+
+
 def score_candidates(
     candidates: pd.DataFrame,
     profile: pd.DataFrame,
@@ -681,7 +841,6 @@ def score_candidates(
     out["final_score"] = out["raw_distance"] + out["genre_penalty"]
 
     support_artists = []
-
     weights = axis_weight_vector(feature_cols)
 
     for _, row in out.iterrows():
@@ -832,7 +991,12 @@ def build_cluster_groups(
     return groups
 
 
-def get_recommendations(raw_input: str) -> dict:
+def get_recommendations(
+    raw_input: str,
+    time_filter: str = "upcoming",
+    selected_date: str | None = None,
+    now: str | None = None,
+) -> dict:
     input_artists = split_input_artists(raw_input)
 
     if not input_artists:
@@ -876,6 +1040,22 @@ def get_recommendations(raw_input: str) -> dict:
     if candidates.empty:
         raise ValueError("No candidates with SAEM vectors found.")
 
+    candidates = apply_time_filter(
+        candidates=candidates,
+        time_filter=time_filter,
+        selected_date=selected_date,
+        now=now,
+    )
+
+    if candidates.empty:
+        return {
+            "input_artist_matches": input_artist_matches,
+            "recommendation_groups": [],
+            "recommendations": [],
+            "time_filter": time_filter,
+            "selected_date": selected_date,
+        }
+
     scored = score_candidates(candidates, profile, centers, feature_cols)
 
     picked = pick_top_per_cluster(
@@ -908,13 +1088,25 @@ def get_recommendations(raw_input: str) -> dict:
         "input_artist_matches": input_artist_matches,
         "recommendation_groups": groups,
         "recommendations": flat_recommendations,
+        "time_filter": time_filter,
+        "selected_date": selected_date,
     }
 
 
 def main():
     try:
         raw_input = sys.argv[1] if len(sys.argv) > 1 else ""
-        result = get_recommendations(raw_input)
+        time_filter = sys.argv[2] if len(sys.argv) > 2 else "upcoming"
+        selected_date = sys.argv[3] if len(sys.argv) > 3 else None
+        now = sys.argv[4] if len(sys.argv) > 4 else None
+
+        result = get_recommendations(
+            raw_input=raw_input,
+            time_filter=time_filter,
+            selected_date=selected_date,
+            now=now,
+        )
+
         print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False))
