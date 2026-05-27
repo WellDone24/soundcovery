@@ -63,10 +63,8 @@ function getClientNowIso(): string {
   return new Date().toISOString();
 }
 
-function getResultsHeadline(timeFilter: TimeFilter): string {
-  if (timeFilter === "upcoming") return "still to play";
-  if (timeFilter === "today") return "playing today";
-  return "check these out";
+function getResultsHeadline(): string {
+  return "Recommended for you";
 }
 
 function getEmptyMessage(timeFilter: TimeFilter): string {
@@ -369,7 +367,7 @@ export default function Home() {
       {results.length > 0 && (
         <section style={{ marginTop: 28 }}>
           <h2 style={{ fontSize: 20 }}>
-            {getResultsHeadline(timeFilter)}
+            {getResultsHeadline()}
           </h2>
 
           {results.map((band) => (
