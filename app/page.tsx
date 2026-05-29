@@ -23,6 +23,7 @@ type Timetable = {
 type Recommendation = {
   name: string;
   reason: string;
+  match_quality?: string | null;
   spotify_url?: string | null;
   timetable?: Timetable | null;
 };
@@ -69,13 +70,6 @@ function getTrackingContext(): TrackingContext {
 
 function getClientNowIso(): string {
   return new Date().toISOString();
-}
-
-function getTimeFilterLabel(timeFilter: TimeFilter): string {
-  return (
-    TIME_FILTER_OPTIONS.find((option) => option.value === timeFilter)?.label ??
-    "Still to play"
-  );
 }
 
 function getEmptyMessage(timeFilter: TimeFilter): string {
@@ -138,6 +132,12 @@ function getMatchedArtistLabel(matches: InputArtistMatch[], fallback: string): s
   return names.join(", ");
 }
 
+function getMatchBadge(matchQuality?: string | null): string {
+  if (matchQuality === "strong") return "🟢 Strong match";
+  if (matchQuality === "decent") return "🟡 Worth a try";
+  return "🔵 Discovery pick";
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [lastQuery, setLastQuery] = useState("");
@@ -155,7 +155,6 @@ export default function Home() {
   useEffect(() => {
     const context = getTrackingContext();
     trackingContextRef.current = context;
-
     track("page_view", context);
   }, []);
 
@@ -168,7 +167,7 @@ export default function Home() {
     }
   }, [results, loading, error]);
 
-  async function handleSubmit() {
+  async function runSearch(filter: TimeFilter) {
     inputRef.current?.blur();
 
     const query = input.trim();
@@ -203,7 +202,7 @@ export default function Home() {
 
     await track("search_submitted", {
       band: query,
-      time_filter: timeFilter,
+      time_filter: filter,
       now,
       ...trackingContext,
     });
@@ -219,7 +218,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           band: query,
-          time_filter: timeFilter,
+          time_filter: filter,
           now,
         }),
         signal: controller.signal,
@@ -235,7 +234,7 @@ export default function Home() {
 
         await track("search_failed", {
           band: query,
-          time_filter: timeFilter,
+          time_filter: filter,
           now,
           error: rawMessage,
           user_error: userMessage,
@@ -257,7 +256,7 @@ export default function Home() {
       await track("recommendations_shown", {
         band: query,
         matched_artists: matchedArtistLabel,
-        time_filter: timeFilter,
+        time_filter: filter,
         now,
         count: recommendations.length,
         ...trackingContext,
@@ -272,7 +271,7 @@ export default function Home() {
 
       await track("search_failed", {
         band: query,
-        time_filter: timeFilter,
+        time_filter: filter,
         now,
         error: message,
         ...trackingContext,
@@ -280,6 +279,18 @@ export default function Home() {
     } finally {
       window.clearTimeout(timeoutId);
       setLoading(false);
+    }
+  }
+
+  async function handleSubmit() {
+    await runSearch(timeFilter);
+  }
+
+  function handleTimeFilterChange(nextFilter: TimeFilter) {
+    setTimeFilter(nextFilter);
+
+    if (hasSearched) {
+      runSearch(nextFilter);
     }
   }
 
@@ -337,43 +348,6 @@ export default function Home() {
         }}
       />
 
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          marginTop: 12,
-          overflowX: "auto",
-          paddingBottom: 2,
-        }}
-      >
-        {TIME_FILTER_OPTIONS.map((option) => {
-          const active = timeFilter === option.value;
-
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setTimeFilter(option.value)}
-              disabled={loading}
-              style={{
-                flex: "0 0 auto",
-                padding: "9px 13px",
-                borderRadius: 999,
-                border: active ? "1px solid #fff" : "1px solid #333",
-                background: active ? "#fff" : "#111",
-                color: active ? "#000" : "#fff",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.7 : 1,
-              }}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-
       <button
         onClick={handleSubmit}
         disabled={loading}
@@ -408,29 +382,59 @@ export default function Home() {
 
       {results.length > 0 && (
         <section ref={resultsRef} style={{ marginTop: 28 }}>
-          <p
+          <div
             style={{
-              margin: "0 0 4px",
-              opacity: 0.7,
-              fontSize: 13,
-              fontWeight: 700,
+              display: "flex",
+              gap: 8,
+              marginBottom: 14,
+              overflowX: "auto",
+              paddingBottom: 2,
             }}
           >
-            {getTimeFilterLabel(timeFilter)}
-          </p>
+            {TIME_FILTER_OPTIONS.map((option) => {
+              const active = timeFilter === option.value;
 
-          <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.25 }}>
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleTimeFilterChange(option.value)}
+                  disabled={loading}
+                  style={{
+                    flex: "0 0 auto",
+                    padding: "9px 13px",
+                    borderRadius: 999,
+                    border: active ? "1px solid #fff" : "1px solid #333",
+                    background: active ? "#fff" : "#111",
+                    color: active ? "#000" : "#fff",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: loading ? "not-allowed" : "pointer",
+                    opacity: loading ? 0.7 : 1,
+                  }}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <h2 style={{ margin: 0, fontSize: 21, lineHeight: 1.2 }}>
             Recommended for you
           </h2>
 
           <p
             style={{
-              margin: "4px 0 0",
-              opacity: 0.75,
-              fontSize: 14,
+              margin: "6px 0 0",
+              opacity: 0.85,
+              fontSize: 16,
+              lineHeight: 1.3,
             }}
           >
-            based on {matchedArtists || lastQuery}
+            based on{" "}
+            <strong style={{ color: "#fff", opacity: 1 }}>
+              {matchedArtists || lastQuery}
+            </strong>
           </p>
 
           {results.map((band) => (
@@ -444,6 +448,17 @@ export default function Home() {
                 background: "#0f0f0f",
               }}
             >
+              <p
+                style={{
+                  margin: "0 0 8px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  opacity: 0.9,
+                }}
+              >
+                {getMatchBadge(band.match_quality)}
+              </p>
+
               <strong
                 style={{
                   display: "block",
@@ -493,6 +508,7 @@ export default function Home() {
                       query_band: lastQuery,
                       recommended_band: band.name,
                       time_filter: timeFilter,
+                      match_quality: band.match_quality,
                       ...trackingContext,
                     });
                   }}
