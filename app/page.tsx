@@ -122,7 +122,10 @@ function getUserFacingErrorMessage(error?: string): string {
   return "Could not load recommendations right now.";
 }
 
-function getMatchedArtistLabel(matches: InputArtistMatch[], fallback: string): string {
+function getMatchedArtistLabel(
+  matches: InputArtistMatch[],
+  fallback: string,
+): string {
   const names = matches
     .map((match) => match.matched_name || match.input)
     .filter(Boolean);
@@ -151,6 +154,7 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLElement | null>(null);
   const trackingContextRef = useRef<TrackingContext | null>(null);
+  const scrollAfterSearchRef = useRef(false);
 
   useEffect(() => {
     const context = getTrackingContext();
@@ -159,15 +163,23 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!loading && !error && results.length > 0) {
+    if (
+      scrollAfterSearchRef.current &&
+      !loading &&
+      hasSearched &&
+      !error
+    ) {
       resultsRef.current?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
-    }
-  }, [results, loading, error]);
 
-  async function runSearch(filter: TimeFilter) {
+      scrollAfterSearchRef.current = false;
+    }
+  }, [loading, hasSearched, error]);
+
+  async function runSearch(filter: TimeFilter, shouldScroll = false) {
+    scrollAfterSearchRef.current = shouldScroll;
     inputRef.current?.blur();
 
     const query = input.trim();
@@ -194,8 +206,6 @@ export default function Home() {
     const now = getClientNowIso();
 
     setError("");
-    setResults([]);
-    setMatchedArtists("");
     setLoading(true);
     setLastQuery(query);
     setHasSearched(true);
@@ -231,6 +241,7 @@ export default function Home() {
         const userMessage = getUserFacingErrorMessage(rawMessage);
 
         setError(userMessage);
+        setResults([]);
 
         await track("search_failed", {
           band: query,
@@ -268,6 +279,7 @@ export default function Home() {
           : "Could not load recommendations right now.";
 
       setError(message);
+      setResults([]);
 
       await track("search_failed", {
         band: query,
@@ -283,14 +295,14 @@ export default function Home() {
   }
 
   async function handleSubmit() {
-    await runSearch(timeFilter);
+    await runSearch(timeFilter, true);
   }
 
   function handleTimeFilterChange(nextFilter: TimeFilter) {
     setTimeFilter(nextFilter);
 
-    if (hasSearched) {
-      runSearch(nextFilter);
+    if (hasSearched && !loading) {
+      runSearch(nextFilter, false);
     }
   }
 
@@ -348,6 +360,43 @@ export default function Home() {
         }}
       />
 
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginTop: 12,
+          overflowX: "auto",
+          paddingBottom: 2,
+        }}
+      >
+        {TIME_FILTER_OPTIONS.map((option) => {
+          const active = timeFilter === option.value;
+
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => handleTimeFilterChange(option.value)}
+              disabled={loading}
+              style={{
+                flex: "0 0 auto",
+                padding: "9px 13px",
+                borderRadius: 999,
+                border: active ? "1px solid #fff" : "1px solid #333",
+                background: active ? "#fff" : "#111",
+                color: active ? "#000" : "#fff",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.7 : 1,
+              }}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+
       <button
         onClick={handleSubmit}
         disabled={loading}
@@ -374,51 +423,8 @@ export default function Home() {
         </p>
       )}
 
-      {!loading && hasSearched && !error && results.length === 0 && (
-        <p style={{ marginTop: 18, opacity: 0.75 }}>
-          {getEmptyMessage(timeFilter)}
-        </p>
-      )}
-
-      {results.length > 0 && (
+      {hasSearched && !error && (
         <section ref={resultsRef} style={{ marginTop: 28 }}>
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              marginBottom: 14,
-              overflowX: "auto",
-              paddingBottom: 2,
-            }}
-          >
-            {TIME_FILTER_OPTIONS.map((option) => {
-              const active = timeFilter === option.value;
-
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => handleTimeFilterChange(option.value)}
-                  disabled={loading}
-                  style={{
-                    flex: "0 0 auto",
-                    padding: "9px 13px",
-                    borderRadius: 999,
-                    border: active ? "1px solid #fff" : "1px solid #333",
-                    background: active ? "#fff" : "#111",
-                    color: active ? "#000" : "#fff",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: loading ? "not-allowed" : "pointer",
-                    opacity: loading ? 0.7 : 1,
-                  }}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-
           <h2 style={{ margin: 0, fontSize: 21, lineHeight: 1.2 }}>
             Recommended for you
           </h2>
@@ -436,6 +442,12 @@ export default function Home() {
               {matchedArtists || lastQuery}
             </strong>
           </p>
+
+          {!loading && results.length === 0 && (
+            <p style={{ marginTop: 18, opacity: 0.75 }}>
+              {getEmptyMessage(timeFilter)}
+            </p>
+          )}
 
           {results.map((band) => (
             <article
