@@ -27,8 +27,16 @@ type Recommendation = {
   timetable?: Timetable | null;
 };
 
+type InputArtistMatch = {
+  input: string;
+  matched_name?: string | null;
+  score?: number | null;
+  used_fuzzy?: boolean;
+};
+
 type ApiResponse = {
   recommendations?: Recommendation[];
+  input_artist_matches?: InputArtistMatch[];
   error?: string;
 };
 
@@ -63,8 +71,11 @@ function getClientNowIso(): string {
   return new Date().toISOString();
 }
 
-function getResultsHeadline(): string {
-  return "Recommended for you";
+function getTimeFilterLabel(timeFilter: TimeFilter): string {
+  return (
+    TIME_FILTER_OPTIONS.find((option) => option.value === timeFilter)?.label ??
+    "Still to play"
+  );
 }
 
 function getEmptyMessage(timeFilter: TimeFilter): string {
@@ -117,16 +128,28 @@ function getUserFacingErrorMessage(error?: string): string {
   return "Could not load recommendations right now.";
 }
 
+function getMatchedArtistLabel(matches: InputArtistMatch[], fallback: string): string {
+  const names = matches
+    .map((match) => match.matched_name || match.input)
+    .filter(Boolean);
+
+  if (names.length === 0) return fallback;
+
+  return names.join(", ");
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [lastQuery, setLastQuery] = useState("");
   const [results, setResults] = useState<Recommendation[]>([]);
+  const [matchedArtists, setMatchedArtists] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("upcoming");
   const [hasSearched, setHasSearched] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLElement | null>(null);
   const trackingContextRef = useRef<TrackingContext | null>(null);
 
   useEffect(() => {
@@ -136,6 +159,15 @@ export default function Home() {
     track("page_view", context);
   }, []);
 
+  useEffect(() => {
+    if (!loading && !error && results.length > 0) {
+      resultsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+  }, [results, loading, error]);
+
   async function handleSubmit() {
     inputRef.current?.blur();
 
@@ -144,6 +176,7 @@ export default function Home() {
     if (!query) {
       setError("Start with an artist you like.");
       setResults([]);
+      setMatchedArtists("");
       setHasSearched(false);
       return;
     }
@@ -153,6 +186,7 @@ export default function Home() {
     if (!apiUrl) {
       setError("API URL is not configured.");
       setResults([]);
+      setMatchedArtists("");
       setHasSearched(false);
       return;
     }
@@ -162,6 +196,7 @@ export default function Home() {
 
     setError("");
     setResults([]);
+    setMatchedArtists("");
     setLoading(true);
     setLastQuery(query);
     setHasSearched(true);
@@ -211,10 +246,17 @@ export default function Home() {
       }
 
       const recommendations = data.recommendations ?? [];
+      const matchedArtistLabel = getMatchedArtistLabel(
+        data.input_artist_matches ?? [],
+        query,
+      );
+
+      setMatchedArtists(matchedArtistLabel);
       setResults(recommendations);
 
       await track("recommendations_shown", {
         band: query,
+        matched_artists: matchedArtistLabel,
         time_filter: timeFilter,
         now,
         count: recommendations.length,
@@ -365,10 +407,31 @@ export default function Home() {
       )}
 
       {results.length > 0 && (
-        <section style={{ marginTop: 28 }}>
-          <h2 style={{ fontSize: 20 }}>
-            {getResultsHeadline()}
+        <section ref={resultsRef} style={{ marginTop: 28 }}>
+          <p
+            style={{
+              margin: "0 0 4px",
+              opacity: 0.7,
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            {getTimeFilterLabel(timeFilter)}
+          </p>
+
+          <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.25 }}>
+            Recommended for you
           </h2>
+
+          <p
+            style={{
+              margin: "4px 0 0",
+              opacity: 0.75,
+              fontSize: 14,
+            }}
+          >
+            based on {matchedArtists || lastQuery}
+          </p>
 
           {results.map((band) => (
             <article
