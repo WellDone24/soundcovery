@@ -152,7 +152,7 @@ export default function Home() {
   const [hasSearched, setHasSearched] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const resultsRef = useRef<HTMLElement | null>(null);
+  const filterRef = useRef<HTMLDivElement | null>(null);
   const trackingContextRef = useRef<TrackingContext | null>(null);
   const scrollAfterSearchRef = useRef(false);
 
@@ -169,7 +169,7 @@ export default function Home() {
       hasSearched &&
       !error
     ) {
-      resultsRef.current?.scrollIntoView({
+      filterRef.current?.scrollIntoView({
         behavior: "smooth",
         block: "start",
       });
@@ -302,7 +302,7 @@ export default function Home() {
     setTimeFilter(nextFilter);
 
     if (hasSearched && !loading) {
-      runSearch(nextFilter, false);
+      runSearch(nextFilter, true);
     }
   }
 
@@ -360,13 +360,35 @@ export default function Home() {
         }}
       />
 
+      <button
+        onClick={handleSubmit}
+        disabled={loading}
+        style={{
+          marginTop: 14,
+          width: "100%",
+          padding: "15px 18px",
+          borderRadius: 16,
+          border: "none",
+          background: "#fff",
+          color: "#000",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: loading ? "not-allowed" : "pointer",
+          opacity: loading ? 0.7 : 1,
+        }}
+      >
+        {loading ? "Finding..." : "Find festival acts"}
+      </button>
+
       <div
+        ref={filterRef}
         style={{
           display: "flex",
           gap: 8,
-          marginTop: 12,
+          marginTop: 14,
           overflowX: "auto",
           paddingBottom: 2,
+          scrollMarginTop: 12,
         }}
       >
         {TIME_FILTER_OPTIONS.map((option) => {
@@ -397,26 +419,6 @@ export default function Home() {
         })}
       </div>
 
-      <button
-        onClick={handleSubmit}
-        disabled={loading}
-        style={{
-          marginTop: 14,
-          width: "100%",
-          padding: "15px 18px",
-          borderRadius: 16,
-          border: "none",
-          background: "#fff",
-          color: "#000",
-          fontSize: 16,
-          fontWeight: 700,
-          cursor: loading ? "not-allowed" : "pointer",
-          opacity: loading ? 0.7 : 1,
-        }}
-      >
-        {loading ? "Finding..." : "Find festival acts"}
-      </button>
-
       {error && (
         <p style={{ color: "#ff6b6b", marginTop: 12 }}>
           {error}
@@ -424,7 +426,7 @@ export default function Home() {
       )}
 
       {hasSearched && !error && (
-        <section ref={resultsRef} style={{ marginTop: 28 }}>
+        <section style={{ marginTop: 22 }}>
           <h2 style={{ margin: 0, fontSize: 21, lineHeight: 1.2 }}>
             Recommended for you
           </h2>
