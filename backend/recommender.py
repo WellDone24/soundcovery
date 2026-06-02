@@ -12,6 +12,8 @@ from scipy.spatial.distance import cdist
 from sklearn.cluster import KMeans
 from rapidfuzz import process, fuzz
 
+from festival_loader import resolve_festival_context
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -25,9 +27,6 @@ GENRE_TABLE = "artist_genre_enrichment"
 AXIS_TEXT_TABLE = "axis_text_fragments"
 EXTERNAL_LINKS_TABLE = "artist_external_links"
 TIMETABLE_TABLE = "festival_timetable"
-
-CANDIDATE_SET_NAME = "rock_for_people_2026"
-CANDIDATE_SET_VERSION = "V2"
 
 MAX_CLUSTERS = 3
 RECS_PER_CLUSTER = 5
@@ -203,7 +202,11 @@ def load_artist_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     return df.dropna(subset=axis_cols).reset_index(drop=True)
 
 
-def load_candidate_set(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_candidate_set(
+    conn: sqlite3.Connection,
+    set_name: str,
+    set_version: str,
+) -> pd.DataFrame:
     return pd.read_sql_query(
         f"""
         SELECT DISTINCT
@@ -213,9 +216,10 @@ def load_candidate_set(conn: sqlite3.Connection) -> pd.DataFrame:
         WHERE set_name = ?
           AND set_version = ?
           AND mbid IS NOT NULL
+          AND TRIM(mbid) != ''
         """,
         conn,
-        params=[CANDIDATE_SET_NAME, CANDIDATE_SET_VERSION],
+        params=[set_name, set_version],
     )
 
 
@@ -280,7 +284,11 @@ def load_external_links(conn: sqlite3.Connection) -> pd.DataFrame:
     return df.drop_duplicates(subset=["mbid"]).copy()
 
 
-def load_timetable(conn: sqlite3.Connection) -> pd.DataFrame:
+def load_timetable(
+    conn: sqlite3.Connection,
+    set_name: str,
+    set_version: str,
+) -> pd.DataFrame:
     df = pd.read_sql_query(
         f"""
         SELECT
@@ -304,7 +312,7 @@ def load_timetable(conn: sqlite3.Connection) -> pd.DataFrame:
           AND TRIM(mbid) != ''
         """,
         conn,
-        params=[CANDIDATE_SET_NAME, CANDIDATE_SET_VERSION],
+        params=[set_name, set_version],
     )
 
     if df.empty:
@@ -325,6 +333,10 @@ def load_timetable(conn: sqlite3.Connection) -> pd.DataFrame:
         ])
 
     df = df.sort_values(["date", "start_time", "stage"], na_position="last")
+
+    # MVP behavior:
+    # Keep one timetable row per artist. If an artist has multiple appearances,
+    # only the earliest one is returned.
     return df.drop_duplicates(subset=["mbid"], keep="first").copy()
 
 
@@ -991,8 +1003,28 @@ def build_cluster_groups(
     return groups
 
 
+def compact_festival_context(festival_context: dict) -> dict:
+    """
+    Public response shape for frontend.
+
+    set_name/set_version are included for debugging right now.
+    The frontend should still use festival_slug as its public identifier.
+    """
+    return {
+        "festival_slug": festival_context.get("festival_slug"),
+        "display_name": festival_context.get("display_name"),
+        "set_name": festival_context.get("set_name"),
+        "set_version": festival_context.get("set_version"),
+        "is_default": festival_context.get("is_default"),
+        "starts_on": festival_context.get("starts_on"),
+        "ends_on": festival_context.get("ends_on"),
+        "has_timetable": festival_context.get("has_timetable"),
+    }
+
+
 def get_recommendations(
     raw_input: str,
+    festival_slug: str | None = None,
     time_filter: str = "upcoming",
     selected_date: str | None = None,
     now: str | None = None,
@@ -1003,12 +1035,37 @@ def get_recommendations(
         raise ValueError("No input artists provided.")
 
     with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+
+        festival_context = resolve_festival_context(
+            conn=conn,
+            festival_slug=festival_slug,
+        )
+
+        set_name = festival_context["set_name"]
+        set_version = festival_context["set_version"]
+        has_timetable = bool(festival_context.get("has_timetable"))
+
         matrix = load_artist_matrix(conn)
-        candidate_set = load_candidate_set(conn)
+        candidate_set = load_candidate_set(
+            conn=conn,
+            set_name=set_name,
+            set_version=set_version,
+        )
         genres = load_genres(conn)
         external_links = load_external_links(conn)
-        timetable = load_timetable(conn)
+        timetable = load_timetable(
+            conn=conn,
+            set_name=set_name,
+            set_version=set_version,
+        )
         axis_fragments = load_axis_text_fragments(conn)
+
+    if candidate_set.empty:
+        raise ValueError(
+            "No candidate artists found for festival set: "
+            f"{set_name} / {set_version}"
+        )
 
     matrix = matrix.merge(genres, on="mbid", how="left")
     matrix = matrix.merge(external_links, on="mbid", how="left")
@@ -1040,19 +1097,33 @@ def get_recommendations(
     if candidates.empty:
         raise ValueError("No candidates with SAEM vectors found.")
 
+    requested_time_filter = time_filter
+
+    # If the active festival has no timetable yet, lineup-mode recommendations
+    # should still work. In that case, ignore time filters internally.
+    effective_time_filter = time_filter
+    time_filter_applied = True
+
+    if not has_timetable:
+        effective_time_filter = "all"
+        time_filter_applied = False
+
     candidates = apply_time_filter(
         candidates=candidates,
-        time_filter=time_filter,
+        time_filter=effective_time_filter,
         selected_date=selected_date,
         now=now,
     )
 
     if candidates.empty:
         return {
+            "festival": compact_festival_context(festival_context),
             "input_artist_matches": input_artist_matches,
             "recommendation_groups": [],
             "recommendations": [],
-            "time_filter": time_filter,
+            "time_filter": requested_time_filter,
+            "effective_time_filter": effective_time_filter,
+            "time_filter_applied": time_filter_applied,
             "selected_date": selected_date,
         }
 
@@ -1085,10 +1156,13 @@ def get_recommendations(
     )
 
     return {
+        "festival": compact_festival_context(festival_context),
         "input_artist_matches": input_artist_matches,
         "recommendation_groups": groups,
         "recommendations": flat_recommendations,
-        "time_filter": time_filter,
+        "time_filter": requested_time_filter,
+        "effective_time_filter": effective_time_filter,
+        "time_filter_applied": time_filter_applied,
         "selected_date": selected_date,
     }
 
@@ -1099,9 +1173,11 @@ def main():
         time_filter = sys.argv[2] if len(sys.argv) > 2 else "upcoming"
         selected_date = sys.argv[3] if len(sys.argv) > 3 else None
         now = sys.argv[4] if len(sys.argv) > 4 else None
+        festival_slug = sys.argv[5] if len(sys.argv) > 5 else None
 
         result = get_recommendations(
             raw_input=raw_input,
+            festival_slug=festival_slug,
             time_filter=time_filter,
             selected_date=selected_date,
             now=now,

@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 from urllib.parse import urlparse
 
 import pymysql
@@ -7,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from recommender import get_recommendations
+from recommender import get_recommendations, DB_PATH
+from festival_loader import build_festivals_response
 
 
 app = FastAPI(title="Soundcovery Recommender API")
@@ -25,6 +27,7 @@ app.add_middleware(
 
 class RecommendRequest(BaseModel):
     band: str
+    festival: str | None = None
     time_filter: str = "upcoming"
     selected_date: str | None = None
     now: str | None = None
@@ -34,6 +37,12 @@ class TrackRequest(BaseModel):
     session_id: str | None = None
     event_type: str
     payload: dict = Field(default_factory=dict)
+
+
+def get_saem_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def get_tracking_connection():
@@ -96,19 +105,52 @@ def write_event(session_id, event_type, payload):
 
 @app.get("/health")
 def health():
+    result = {
+        "ok": True,
+        "tracking": None,
+        "saem_db": None,
+    }
+
     try:
         conn = get_tracking_connection()
         conn.close()
+        result["tracking"] = "db connected"
+    except Exception as e:
+        result["ok"] = False
+        result["tracking_error"] = str(e)
 
-        return {
-            "ok": True,
-            "tracking": "db connected",
-        }
+    try:
+        conn = get_saem_connection()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS n FROM active_sets").fetchone()
+            result["saem_db"] = {
+                "connected": True,
+                "active_sets": int(row["n"]),
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        result["ok"] = False
+        result["saem_db_error"] = str(e)
+
+    return result
+
+
+@app.get("/festivals")
+def festivals():
+    try:
+        conn = get_saem_connection()
+
+        try:
+            return build_festivals_response(conn)
+        finally:
+            conn.close()
 
     except Exception as e:
         return {
-            "ok": False,
-            "tracking_error": str(e),
+            "error": str(e),
+            "festivals": [],
+            "default_festival_slug": None,
         }
 
 
@@ -121,6 +163,7 @@ def recommend(request: RecommendRequest):
             "error": "Band is required.",
             "recommendations": [],
             "recommendation_groups": [],
+            "festival": request.festival,
             "time_filter": request.time_filter,
             "selected_date": request.selected_date,
         }
@@ -128,6 +171,7 @@ def recommend(request: RecommendRequest):
     try:
         return get_recommendations(
             raw_input=band,
+            festival_slug=request.festival,
             time_filter=request.time_filter,
             selected_date=request.selected_date,
             now=request.now,
@@ -138,6 +182,7 @@ def recommend(request: RecommendRequest):
             "error": str(e),
             "recommendations": [],
             "recommendation_groups": [],
+            "festival": request.festival,
             "time_filter": request.time_filter,
             "selected_date": request.selected_date,
         }
