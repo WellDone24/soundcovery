@@ -6,6 +6,24 @@ import { track } from "@/lib/tracking";
 
 type TimeFilter = "upcoming" | "all" | "today";
 
+type Festival = {
+  festival_slug: string;
+  display_name: string;
+  set_name?: string;
+  set_version?: string;
+  is_default?: boolean;
+  sort_order?: number;
+  starts_on?: string | null;
+  ends_on?: string | null;
+  has_timetable?: boolean;
+};
+
+type FestivalsResponse = {
+  festivals?: Festival[];
+  default_festival_slug?: string | null;
+  error?: string;
+};
+
 type Timetable = {
   festival?: string | null;
   day?: string | null;
@@ -36,9 +54,12 @@ type InputArtistMatch = {
 };
 
 type ApiResponse = {
+  festival?: Festival;
   recommendations?: Recommendation[];
   input_artist_matches?: InputArtistMatch[];
   error?: string;
+  time_filter_applied?: boolean;
+  effective_time_filter?: string;
 };
 
 type TrackingContext = {
@@ -72,7 +93,22 @@ function getClientNowIso(): string {
   return new Date().toISOString();
 }
 
-function getEmptyMessage(timeFilter: TimeFilter): string {
+function getFestivalBySlug(
+  festivals: Festival[],
+  slug?: string | null,
+): Festival | null {
+  if (!slug) return null;
+  return festivals.find((festival) => festival.festival_slug === slug) ?? null;
+}
+
+function getEmptyMessage(
+  timeFilter: TimeFilter,
+  selectedFestival?: Festival | null,
+): string {
+  if (selectedFestival?.has_timetable === false) {
+    return "Couldn’t find good matches for that lineup.";
+  }
+
   if (timeFilter === "upcoming") {
     return "No strong matches still to play. Try all days.";
   }
@@ -104,6 +140,13 @@ function getUserFacingErrorMessage(error?: string): string {
   }
 
   if (
+    normalized.includes("unknown or inactive festival") ||
+    normalized.includes("unknown festival")
+  ) {
+    return "That festival is not available right now.";
+  }
+
+  if (
     normalized.includes("no input artists provided") ||
     normalized.includes("band is required")
   ) {
@@ -112,6 +155,7 @@ function getUserFacingErrorMessage(error?: string): string {
 
   if (
     normalized.includes("no candidates with saem vectors") ||
+    normalized.includes("no candidate artists found") ||
     normalized.includes("no saem data") ||
     normalized.includes("artist_axis_vectors") ||
     normalized.includes("mbid")
@@ -151,15 +195,75 @@ export default function Home() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("upcoming");
   const [hasSearched, setHasSearched] = useState(false);
 
+  const [festivals, setFestivals] = useState<Festival[]>([]);
+  const [selectedFestivalSlug, setSelectedFestivalSlug] = useState<string | null>(null);
+  const [festivalLoading, setFestivalLoading] = useState(true);
+  const [festivalError, setFestivalError] = useState("");
+  const [showFestivalSwitch, setShowFestivalSwitch] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const filterRef = useRef<HTMLDivElement | null>(null);
   const trackingContextRef = useRef<TrackingContext | null>(null);
   const scrollAfterSearchRef = useRef(false);
 
+  const selectedFestival = getFestivalBySlug(festivals, selectedFestivalSlug);
+  const selectedFestivalHasTimetable = selectedFestival?.has_timetable !== false;
+
   useEffect(() => {
     const context = getTrackingContext();
     trackingContextRef.current = context;
     track("page_view", context);
+  }, []);
+
+  useEffect(() => {
+    async function loadFestivals() {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+      if (!apiUrl) {
+        setFestivalError("API URL is not configured.");
+        setFestivalLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiUrl}/festivals`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        const data: FestivalsResponse = await response.json();
+
+        if (!response.ok || data.error) {
+          throw new Error(data.error ?? "Could not load festivals.");
+        }
+
+        const loadedFestivals = data.festivals ?? [];
+
+        setFestivals(loadedFestivals);
+
+        const defaultSlug =
+          data.default_festival_slug ??
+          loadedFestivals.find((festival) => festival.is_default)?.festival_slug ??
+          loadedFestivals[0]?.festival_slug ??
+          null;
+
+        setSelectedFestivalSlug(defaultSlug);
+
+        if (!defaultSlug) {
+          setFestivalError("No festival available right now.");
+        }
+      } catch (err) {
+        setFestivalError(
+          err instanceof Error ? err.message : "Could not load festivals.",
+        );
+      } finally {
+        setFestivalLoading(false);
+      }
+    }
+
+    loadFestivals();
   }, []);
 
   useEffect(() => {
@@ -178,7 +282,11 @@ export default function Home() {
     }
   }, [loading, hasSearched, error]);
 
-  async function runSearch(filter: TimeFilter, shouldScroll = false) {
+  async function runSearch(
+    filter: TimeFilter,
+    shouldScroll = false,
+    festivalSlugOverride?: string,
+  ) {
     scrollAfterSearchRef.current = shouldScroll;
     inputRef.current?.blur();
 
@@ -202,6 +310,17 @@ export default function Home() {
       return;
     }
 
+    const festivalSlug = festivalSlugOverride ?? selectedFestivalSlug;
+    const festival = getFestivalBySlug(festivals, festivalSlug);
+
+    if (!festivalSlug) {
+      setError("No festival selected.");
+      setResults([]);
+      setMatchedArtists("");
+      setHasSearched(false);
+      return;
+    }
+
     const trackingContext = trackingContextRef.current ?? getTrackingContext();
     const now = getClientNowIso();
 
@@ -212,6 +331,8 @@ export default function Home() {
 
     await track("search_submitted", {
       band: query,
+      festival_slug: festivalSlug,
+      festival_name: festival?.display_name ?? null,
       time_filter: filter,
       now,
       ...trackingContext,
@@ -228,6 +349,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           band: query,
+          festival: festivalSlug,
           time_filter: filter,
           now,
         }),
@@ -245,6 +367,8 @@ export default function Home() {
 
         await track("search_failed", {
           band: query,
+          festival_slug: festivalSlug,
+          festival_name: festival?.display_name ?? null,
           time_filter: filter,
           now,
           error: rawMessage,
@@ -267,7 +391,14 @@ export default function Home() {
       await track("recommendations_shown", {
         band: query,
         matched_artists: matchedArtistLabel,
+        festival_slug: festivalSlug,
+        festival_name:
+          data.festival?.display_name ??
+          festival?.display_name ??
+          null,
         time_filter: filter,
+        effective_time_filter: data.effective_time_filter ?? null,
+        time_filter_applied: data.time_filter_applied ?? null,
         now,
         count: recommendations.length,
         ...trackingContext,
@@ -283,6 +414,8 @@ export default function Home() {
 
       await track("search_failed", {
         band: query,
+        festival_slug: festivalSlug,
+        festival_name: festival?.display_name ?? null,
         time_filter: filter,
         now,
         error: message,
@@ -303,6 +436,32 @@ export default function Home() {
 
     if (hasSearched && !loading) {
       runSearch(nextFilter, true);
+    }
+  }
+
+  function handleFestivalChange(nextSlug: string) {
+    if (nextSlug === selectedFestivalSlug) {
+      setShowFestivalSwitch(false);
+      return;
+    }
+
+    const previousSlug = selectedFestivalSlug;
+    const nextFestival = getFestivalBySlug(festivals, nextSlug);
+
+    setSelectedFestivalSlug(nextSlug);
+    setShowFestivalSwitch(false);
+
+    const trackingContext = trackingContextRef.current ?? getTrackingContext();
+
+    track("festival_changed", {
+      previous_festival_slug: previousSlug,
+      next_festival_slug: nextSlug,
+      next_festival_name: nextFestival?.display_name ?? null,
+      ...trackingContext,
+    });
+
+    if (hasSearched && !loading) {
+      runSearch(timeFilter, true, nextSlug);
     }
   }
 
@@ -331,9 +490,87 @@ export default function Home() {
           find the acts you shouldn’t miss
         </h1>
 
-        <p style={{ marginTop: 4, opacity: 0.7 }}>
-          Rock for People 2026
-        </p>
+        <div style={{ marginTop: 8 }}>
+          <p style={{ margin: 0, opacity: 0.7 }}>
+            {festivalLoading
+              ? "Loading festivals..."
+              : selectedFestival?.display_name ?? "No festival selected"}
+          </p>
+
+          {selectedFestival?.has_timetable === false && (
+            <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 13 }}>
+              Lineup mode · timetable not available yet
+            </p>
+          )}
+
+          {festivalError && (
+            <p style={{ margin: "6px 0 0", color: "#ff6b6b", fontSize: 13 }}>
+              {festivalError}
+            </p>
+          )}
+
+          {festivals.length > 1 && (
+            <button
+              type="button"
+              onClick={() => setShowFestivalSwitch((value) => !value)}
+              disabled={loading || festivalLoading}
+              style={{
+                marginTop: 8,
+                padding: "7px 11px",
+                borderRadius: 999,
+                border: "1px solid #333",
+                background: "#111",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: loading || festivalLoading ? "not-allowed" : "pointer",
+                opacity: loading || festivalLoading ? 0.7 : 1,
+              }}
+            >
+              Switch festival
+            </button>
+          )}
+
+          {showFestivalSwitch && festivals.length > 1 && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                gap: 8,
+                marginTop: 10,
+              }}
+            >
+              {festivals.map((festival) => {
+                const active =
+                  festival.festival_slug === selectedFestivalSlug;
+
+                return (
+                  <button
+                    key={festival.festival_slug}
+                    type="button"
+                    onClick={() => handleFestivalChange(festival.festival_slug)}
+                    disabled={loading}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 999,
+                      border: active ? "1px solid #fff" : "1px solid #333",
+                      background: active ? "#fff" : "#111",
+                      color: active ? "#000" : "#fff",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: loading ? "not-allowed" : "pointer",
+                      opacity: loading ? 0.7 : 1,
+                    }}
+                  >
+                    {festival.display_name}
+                    {festival.has_timetable === false ? " · lineup" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </header>
 
       <input
@@ -341,7 +578,7 @@ export default function Home() {
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !loading) {
+          if (e.key === "Enter" && !loading && !festivalLoading) {
             handleSubmit();
           }
         }}
@@ -362,7 +599,7 @@ export default function Home() {
 
       <button
         onClick={handleSubmit}
-        disabled={loading}
+        disabled={loading || festivalLoading || !selectedFestivalSlug}
         style={{
           marginTop: 14,
           width: "100%",
@@ -373,51 +610,76 @@ export default function Home() {
           color: "#000",
           fontSize: 16,
           fontWeight: 700,
-          cursor: loading ? "not-allowed" : "pointer",
-          opacity: loading ? 0.7 : 1,
+          cursor:
+            loading || festivalLoading || !selectedFestivalSlug
+              ? "not-allowed"
+              : "pointer",
+          opacity: loading || festivalLoading || !selectedFestivalSlug ? 0.7 : 1,
         }}
       >
         {loading ? "Finding..." : "Find festival acts"}
       </button>
 
-      <div
-        ref={filterRef}
-        style={{
-          display: "flex",
-          gap: 8,
-          marginTop: 14,
-          overflowX: "auto",
-          paddingBottom: 2,
-          scrollMarginTop: 12,
-        }}
-      >
-        {TIME_FILTER_OPTIONS.map((option) => {
-          const active = timeFilter === option.value;
+      {selectedFestivalHasTimetable && (
+        <div
+          ref={filterRef}
+          style={{
+            display: "flex",
+            gap: 8,
+            marginTop: 14,
+            overflowX: "auto",
+            paddingBottom: 2,
+            scrollMarginTop: 12,
+          }}
+        >
+          {TIME_FILTER_OPTIONS.map((option) => {
+            const active = timeFilter === option.value;
 
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => handleTimeFilterChange(option.value)}
-              disabled={loading}
-              style={{
-                flex: "0 0 auto",
-                padding: "9px 13px",
-                borderRadius: 999,
-                border: active ? "1px solid #fff" : "1px solid #333",
-                background: active ? "#fff" : "#111",
-                color: active ? "#000" : "#fff",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.7 : 1,
-              }}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => handleTimeFilterChange(option.value)}
+                disabled={loading}
+                style={{
+                  flex: "0 0 auto",
+                  padding: "9px 13px",
+                  borderRadius: 999,
+                  border: active ? "1px solid #fff" : "1px solid #333",
+                  background: active ? "#fff" : "#111",
+                  color: active ? "#000" : "#fff",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: loading ? "not-allowed" : "pointer",
+                  opacity: loading ? 0.7 : 1,
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {!selectedFestivalHasTimetable && (
+        <div
+          ref={filterRef}
+          style={{
+            marginTop: 14,
+            padding: "10px 12px",
+            border: "1px solid #333",
+            borderRadius: 14,
+            background: "#0f0f0f",
+            color: "#fff",
+            opacity: 0.7,
+            fontSize: 13,
+            scrollMarginTop: 12,
+          }}
+        >
+          Showing lineup recommendations. Time filters will appear once the
+          timetable is available.
+        </div>
+      )}
 
       {error && (
         <p style={{ color: "#ff6b6b", marginTop: 12 }}>
@@ -443,11 +705,20 @@ export default function Home() {
             <strong style={{ color: "#fff", opacity: 1 }}>
               {matchedArtists || lastQuery}
             </strong>
+            {selectedFestival && (
+              <>
+                {" "}
+                at{" "}
+                <strong style={{ color: "#fff", opacity: 1 }}>
+                  {selectedFestival.display_name}
+                </strong>
+              </>
+            )}
           </p>
 
           {!loading && results.length === 0 && (
             <p style={{ marginTop: 18, opacity: 0.75 }}>
-              {getEmptyMessage(timeFilter)}
+              {getEmptyMessage(timeFilter, selectedFestival)}
             </p>
           )}
 
@@ -521,6 +792,8 @@ export default function Home() {
                     track("spotify_clicked", {
                       query_band: lastQuery,
                       recommended_band: band.name,
+                      festival_slug: selectedFestivalSlug,
+                      festival_name: selectedFestival?.display_name ?? null,
                       time_filter: timeFilter,
                       match_quality: band.match_quality,
                       ...trackingContext,
