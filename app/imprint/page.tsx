@@ -1,4 +1,4 @@
-export default function Impressum() {
+export default function imprint() {
   return (
     <main
       style={{
