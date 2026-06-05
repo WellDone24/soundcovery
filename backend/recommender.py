@@ -83,7 +83,11 @@ TEXT_AXIS_PRIORITY = [
 
 
 def split_input_artists(raw: str) -> list[str]:
-    return [x.strip() for x in raw.split(";") if x.strip()]
+    return [
+        x.strip()
+        for x in re.split(r"[;,\n\r]+", raw)
+        if x.strip()
+    ]
 
 
 def normalize_artist_name(value: str) -> str:
