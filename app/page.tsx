@@ -44,6 +44,9 @@ type Recommendation = {
   match_quality?: string | null;
   spotify_url?: string | null;
   timetable?: Timetable | null;
+  multi_support_artists?: string[];
+  multi_support_count?: number;
+  multi_support_bonus?: number;
 };
 
 type InputArtistMatch = {
@@ -57,6 +60,9 @@ type ApiResponse = {
   festival?: Festival;
   recommendations?: Recommendation[];
   input_artist_matches?: InputArtistMatch[];
+  found_artists?: string[];
+  not_found_artists?: string[];
+  recommendation_basis?: string;
   error?: string;
   time_filter_applied?: boolean;
   effective_time_filter?: string;
@@ -190,6 +196,7 @@ export default function Home() {
   const [lastQuery, setLastQuery] = useState("");
   const [results, setResults] = useState<Recommendation[]>([]);
   const [matchedArtists, setMatchedArtists] = useState("");
+  const [notFoundArtists, setNotFoundArtists] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("upcoming");
@@ -296,6 +303,7 @@ export default function Home() {
       setError("Start with an artist you like.");
       setResults([]);
       setMatchedArtists("");
+      setNotFoundArtists([]);
       setHasSearched(false);
       return;
     }
@@ -306,6 +314,7 @@ export default function Home() {
       setError("API URL is not configured.");
       setResults([]);
       setMatchedArtists("");
+      setNotFoundArtists([]);
       setHasSearched(false);
       return;
     }
@@ -317,6 +326,7 @@ export default function Home() {
       setError("No festival selected.");
       setResults([]);
       setMatchedArtists("");
+      setNotFoundArtists([]);
       setHasSearched(false);
       return;
     }
@@ -364,6 +374,7 @@ export default function Home() {
 
         setError(userMessage);
         setResults([]);
+        setNotFoundArtists([]);
 
         await track("search_failed", {
           band: query,
@@ -380,17 +391,19 @@ export default function Home() {
       }
 
       const recommendations = data.recommendations ?? [];
-      const matchedArtistLabel = getMatchedArtistLabel(
-        data.input_artist_matches ?? [],
-        query,
-      );
+      const matchedArtistLabel =
+        data.recommendation_basis ||
+        getMatchedArtistLabel(data.input_artist_matches ?? [], query);
 
       setMatchedArtists(matchedArtistLabel);
+      setNotFoundArtists(data.not_found_artists ?? []);
       setResults(recommendations);
 
       await track("recommendations_shown", {
         band: query,
         matched_artists: matchedArtistLabel,
+        found_artists: data.found_artists ?? [],
+        not_found_artists: data.not_found_artists ?? [],
         festival_slug: festivalSlug,
         festival_name:
           data.festival?.display_name ??
@@ -411,6 +424,7 @@ export default function Home() {
 
       setError(message);
       setResults([]);
+      setNotFoundArtists([]);
 
       await track("search_failed", {
         band: query,
@@ -716,6 +730,23 @@ export default function Home() {
             )}
           </p>
 
+          {notFoundArtists.length > 0 && (
+            <p
+              style={{
+                margin: "8px 0 0",
+                opacity: 0.7,
+                fontSize: 13,
+                lineHeight: 1.35,
+              }}
+            >
+              Not found: {notFoundArtists.join(", ")}. Results are based on{" "}
+              <strong style={{ color: "#fff", opacity: 1 }}>
+                {matchedArtists}
+              </strong>
+              .
+            </p>
+          )}
+
           {!loading && results.length === 0 && (
             <p style={{ marginTop: 18, opacity: 0.75 }}>
               {getEmptyMessage(timeFilter, selectedFestival)}
@@ -779,6 +810,23 @@ export default function Home() {
               <p style={{ marginTop: 0 }}>
                 {band.reason}
               </p>
+
+              {band.multi_support_count && band.multi_support_count > 1 && (
+                <p
+                  style={{
+                    margin: "8px 0 10px",
+                    opacity: 0.72,
+                    fontSize: 13,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  Matches multiple artists you entered: {" "}
+                  <strong style={{ color: "#fff", opacity: 1 }}>
+                    {band.multi_support_artists?.join(", ")}
+                  </strong>
+                  .
+                </p>
+              )}
 
               {band.spotify_url && (
                 <a
@@ -867,6 +915,6 @@ export default function Home() {
           Imprint
         </a>
       </footer>
-          </main>
+    </main>
   );
 }

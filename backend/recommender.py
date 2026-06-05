@@ -40,7 +40,17 @@ STRONG_MATCH_MAX_SCORE = 35.0
 DECENT_MATCH_MAX_SCORE = 50.0
 WEAK_MATCH_MAX_SCORE = 65.0
 
-FUZZY_MATCH_MIN_SCORE = 80
+FUZZY_MATCH_MIN_SCORE = 88
+FUZZY_MIN_UNIQUE_CHARS = 3
+FUZZY_LENGTH_RATIO_MIN = 0.55
+FUZZY_MIN_INPUT_CHARS = 3
+
+# Multi-support bonus:
+# Candidates that are reasonably close to more than one input artist receive
+# a small score bonus. Lower final_score is better, so the bonus is subtracted.
+MULTI_SUPPORT_DISTANCE_MAX = DECENT_MATCH_MAX_SCORE
+MULTI_SUPPORT_BONUS_PER_EXTRA_MATCH = 5.0
+MULTI_SUPPORT_BONUS_MAX = 10.0
 
 NIGHT_CUTOFF_HOUR = 6
 DEFAULT_SET_DURATION_MINUTES = 45
@@ -87,7 +97,7 @@ def split_input_artists(raw: str) -> list[str]:
         x.strip()
         for x in re.split(r"[;,\n\r]+", raw)
         if x.strip()
-    ]
+]
 
 
 def normalize_artist_name(value: str) -> str:
@@ -118,6 +128,23 @@ def fuzzy_resolve_artist_names(
 
     for raw_name in artist_names:
         normalized_input = normalize_artist_name(raw_name)
+        compact_input = normalized_input.replace(" ", "")
+
+        # Be conservative for fuzzy matching:
+        # - very short inputs like "t" should not become "T. Rex"
+        # - low-variety garbage like "gggggggggg" should not become a real artist
+        if (
+            len(compact_input) < FUZZY_MIN_INPUT_CHARS
+            or len(set(compact_input)) < FUZZY_MIN_UNIQUE_CHARS
+        ):
+            resolved_names.append(raw_name)
+            matches.append({
+                "input": raw_name,
+                "matched_name": None,
+                "score": None,
+                "used_fuzzy": False,
+            })
+            continue
 
         match = process.extractOne(
             normalized_input,
@@ -138,7 +165,16 @@ def fuzzy_resolve_artist_names(
         matched_normalized, score, _ = match
         matched_name = choices[matched_normalized]
 
-        if score >= FUZZY_MATCH_MIN_SCORE:
+        matched_compact = matched_normalized.replace(" ", "")
+        length_ratio = (
+            min(len(compact_input), len(matched_compact))
+            / max(len(compact_input), len(matched_compact))
+        )
+
+        if (
+            score >= FUZZY_MATCH_MIN_SCORE
+            and length_ratio >= FUZZY_LENGTH_RATIO_MIN
+        ):
             resolved_names.append(matched_name)
             matches.append({
                 "input": raw_name,
@@ -156,7 +192,6 @@ def fuzzy_resolve_artist_names(
             })
 
     return resolved_names, matches
-
 
 def load_artist_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
     df = pd.read_sql_query(
@@ -551,22 +586,48 @@ def build_reason(
     return f"A close match to the {support_artist} side of your taste."
 
 
-def resolve_input_artists(matrix: pd.DataFrame, artist_names: list[str]) -> pd.DataFrame:
+def resolve_input_artists(
+    matrix: pd.DataFrame,
+    artist_names: list[str],
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """
+    Resolve input artists against the SAEM matrix.
+
+    Behavior:
+    - Valid artists are used for recommendations.
+    - Invalid artists are collected in not_found_artists.
+    - The request only fails if none of the submitted artists can be resolved.
+
+    Returns:
+    - profile dataframe for found artists
+    - found_artists: display names used for recommendations
+    - not_found_artists: inputs that could not be resolved
+    """
     rows = []
+    found_artists = []
+    not_found_artists = []
 
     for name in artist_names:
         match = matrix[matrix["name"].str.lower() == name.lower()].copy()
 
         if match.empty:
-            raise ValueError(f"Input artist not found in SAEM data: {name}")
+            not_found_artists.append(name)
+            continue
 
         if len(match) > 1:
             raise ValueError(f"Input artist is ambiguous, use MBID later: {name}")
 
-        rows.append(match.iloc[0])
+        row = match.iloc[0]
+        rows.append(row)
+        found_artists.append(str(row["name"]))
 
-    return pd.DataFrame(rows).drop_duplicates(subset=["mbid"]).reset_index(drop=True)
+    if not rows:
+        raise ValueError("None of the input artists were found in the current dataset.")
 
+    profile = pd.DataFrame(rows).drop_duplicates(subset=["mbid"]).reset_index(drop=True)
+    found_artists = profile["name"].astype(str).tolist()
+
+    return profile, found_artists, not_found_artists
 
 def build_clusters(profile: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     n_clusters = min(MAX_CLUSTERS, len(profile))
@@ -854,28 +915,59 @@ def score_candidates(
     out["genre_fit"] = genre_fits
     out["genre_penalty"] = genre_penalties
     out["cluster_context"] = cluster_context_values
-    out["final_score"] = out["raw_distance"] + out["genre_penalty"]
 
     support_artists = []
+    multi_support_artists = []
+    multi_support_counts = []
+    multi_support_bonuses = []
+
     weights = axis_weight_vector(feature_cols)
 
-    for _, row in out.iterrows():
+    # Use positional indices for profile_dists. Do not rely on the pandas index,
+    # because candidates may have been filtered and may carry non-contiguous indices.
+    for pos, (_, row) in enumerate(out.iterrows()):
         cluster_id = int(row["best_cluster"])
         members = profile[profile["taste_cluster"] == cluster_id]
 
         member_arr = weighted_values(members, feature_cols)
-        candidate_vec = row[feature_cols].astype(float).to_numpy().reshape(1, -1) * weights
+        candidate_vec = (
+            row[feature_cols].astype(float).to_numpy().reshape(1, -1) * weights
+        )
 
         dists = cdist(candidate_vec, member_arr, metric="euclidean").ravel()
         nearest_idx = int(np.argmin(dists))
         support_artists.append(members.iloc[nearest_idx]["name"])
 
+        all_profile_distances = profile_dists[pos]
+        sorted_indices = np.argsort(all_profile_distances)
+
+        close_supports = []
+        for idx in sorted_indices:
+            distance = float(all_profile_distances[idx])
+            if distance <= MULTI_SUPPORT_DISTANCE_MAX:
+                close_supports.append(str(profile.iloc[idx]["name"]))
+
+        support_count = len(close_supports)
+        bonus = min(
+            max(0, support_count - 1) * MULTI_SUPPORT_BONUS_PER_EXTRA_MATCH,
+            MULTI_SUPPORT_BONUS_MAX,
+        )
+
+        multi_support_artists.append(close_supports)
+        multi_support_counts.append(support_count)
+        multi_support_bonuses.append(bonus)
+
     out["support_artist"] = support_artists
+    out["multi_support_artists"] = multi_support_artists
+    out["multi_support_count"] = multi_support_counts
+    out["multi_support_bonus"] = multi_support_bonuses
+    out["final_score"] = (
+        out["raw_distance"] + out["genre_penalty"] - out["multi_support_bonus"]
+    )
 
     return out.sort_values(
         ["best_cluster", "final_score", "raw_distance", "nearest_profile_distance"]
     ).reset_index(drop=True)
-
 
 def pick_top_per_cluster(scored: pd.DataFrame, n_clusters: int) -> pd.DataFrame:
     picks = []
@@ -895,7 +987,13 @@ def pick_top_per_cluster(scored: pd.DataFrame, n_clusters: int) -> pd.DataFrame:
     picked = picked.drop_duplicates(subset=["mbid"])
 
     return picked.sort_values(
-        ["best_cluster", "final_score", "raw_distance", "nearest_profile_distance"]
+        [
+            "final_score",
+            "multi_support_count",
+            "raw_distance",
+            "nearest_profile_distance",
+        ],
+        ascending=[True, False, True, True],
     ).reset_index(drop=True)
 
 
@@ -940,11 +1038,14 @@ def build_recommendation_dict(
         "score": round(float(row["final_score"]), 4),
         "raw_distance": round(float(row["raw_distance"]), 4),
         "genre_penalty": round(float(row["genre_penalty"]), 4),
+        "multi_support_bonus": round(float(row.get("multi_support_bonus", 0.0)), 4),
         "match_quality": quality,
         "genre_fit": row["genre_fit"],
         "cluster_context": row["cluster_context"],
         "cluster": cluster_id,
         "support_artist": support,
+        "multi_support_artists": row.get("multi_support_artists", []),
+        "multi_support_count": int(row.get("multi_support_count", 0)),
         "primary_genre": genre,
         "spotify_url": spotify_url if pd.notna(spotify_url) else None,
         "timetable": {
@@ -1090,7 +1191,10 @@ def get_recommendations(
         artist_names=input_artists,
     )
 
-    profile = resolve_input_artists(matrix, resolved_input_artists)
+    profile, found_artists, not_found_artists = resolve_input_artists(
+        matrix=matrix,
+        artist_names=resolved_input_artists,
+    )
     profile_mbids = set(profile["mbid"])
 
     profile, centers = build_clusters(profile, feature_cols)
@@ -1123,6 +1227,9 @@ def get_recommendations(
         return {
             "festival": compact_festival_context(festival_context),
             "input_artist_matches": input_artist_matches,
+            "found_artists": found_artists,
+            "not_found_artists": not_found_artists,
+            "recommendation_basis": join_naturally(found_artists),
             "recommendation_groups": [],
             "recommendations": [],
             "time_filter": requested_time_filter,
@@ -1153,8 +1260,8 @@ def get_recommendations(
     flat_recommendations = sorted(
         flat_recommendations,
         key=lambda r: (
-            r["cluster"],
             r["score"],
+            -r.get("multi_support_count", 0),
             r["raw_distance"],
         ),
     )
@@ -1162,6 +1269,9 @@ def get_recommendations(
     return {
         "festival": compact_festival_context(festival_context),
         "input_artist_matches": input_artist_matches,
+        "found_artists": found_artists,
+        "not_found_artists": not_found_artists,
+        "recommendation_basis": join_naturally(found_artists),
         "recommendation_groups": groups,
         "recommendations": flat_recommendations,
         "time_filter": requested_time_filter,
