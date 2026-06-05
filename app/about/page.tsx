@@ -1,4 +1,8 @@
 export default function About() {
+  const paragraphStyle = {
+    marginBottom: 24,
+  };
+
   return (
     <main
       style={{
@@ -11,30 +15,37 @@ export default function About() {
       <h1
         style={{
           fontSize: 32,
-          marginBottom: 8,
+          marginBottom: 32,
         }}
       >
         About soundcovery
       </h1>
 
-      <p>
+      <p style={paragraphStyle}>
         Most music recommendation systems are heavily influenced by popularity
         and listening bubbles.
       </p>
 
-      <p>
+      <p style={paragraphStyle}>
         soundcovery explores a different idea: helping people discover artists
         based on what they love, not simply on what everyone else is listening
         to.
       </p>
 
-      <p>The project was inspired by a simple question:</p>
-
-      <p>
-        <em>"How did I miss that band?"</em>
+      <p style={paragraphStyle}>
+        The project was inspired by a simple question:
       </p>
 
-      <p>
+      <p
+        style={{
+          fontStyle: "italic",
+          marginBottom: 32,
+        }}
+      >
+        "How did I miss that band?"
+      </p>
+
+      <p style={paragraphStyle}>
         Festival lineups are full of artists that many visitors never get
         around to discovering. Years later, you sometimes look back and wonder
         how you missed a band you would go on to love — especially when they
@@ -43,18 +54,18 @@ export default function About() {
         little earlier.
       </p>
 
-      <p>
+      <p style={paragraphStyle}>
         Recommendations are generated from available artist information and
         similarity signals. This means they are not perfect, especially for
         artists with very limited public information.
       </p>
 
-      <p>
+      <p style={paragraphStyle}>
         At the same time, lesser-known artists are not automatically ranked
         lower simply because they have fewer listeners, followers or streams.
       </p>
 
-      <p>
+      <p style={paragraphStyle}>
         Sometimes that leads to unexpected recommendations.
       </p>
 
