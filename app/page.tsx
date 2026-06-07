@@ -133,7 +133,10 @@ function getUserFacingErrorMessage(error?: string): string {
 
   if (
     normalized.includes("input artist not found") ||
-    normalized.includes("not found in saem data")
+    normalized.includes("not found in saem data") ||
+    normalized.includes("none of the input artists were found") ||
+    normalized.includes("current dataset") ||
+    normalized.includes("python exited with code 1")
   ) {
     return "That artist is not in the current dataset yet.";
   }
@@ -170,6 +173,22 @@ function getUserFacingErrorMessage(error?: string): string {
   }
 
   return "Could not load recommendations right now.";
+}
+
+async function readApiJson<T>(response: Response): Promise<T> {
+  const responseText = await response.text();
+
+  if (!responseText.trim()) {
+    throw new Error(`Empty API response. HTTP ${response.status}`);
+  }
+
+  try {
+    return JSON.parse(responseText) as T;
+  } catch {
+    throw new Error(
+      `Invalid API response. HTTP ${response.status}: ${responseText.slice(0, 300)}`,
+    );
+  }
 }
 
 function getMatchedArtistLabel(
@@ -240,7 +259,7 @@ export default function Home() {
           },
         });
 
-        const data: FestivalsResponse = await response.json();
+        const data = await readApiJson<FestivalsResponse>(response);
 
         if (!response.ok || data.error) {
           throw new Error(data.error ?? "Could not load festivals.");
@@ -366,7 +385,7 @@ export default function Home() {
         signal: controller.signal,
       });
 
-      const data: ApiResponse = await response.json();
+      const data = await readApiJson<ApiResponse>(response);
 
       if (!response.ok || data.error) {
         const rawMessage = data.error ?? "Something went wrong.";
@@ -417,10 +436,13 @@ export default function Home() {
         ...trackingContext,
       });
     } catch (err) {
+      const rawMessage =
+        err instanceof Error ? err.message : "Unknown recommendation error";
+
       const message =
         err instanceof DOMException && err.name === "AbortError"
           ? "This is taking a bit longer than expected."
-          : "Could not load recommendations right now.";
+          : getUserFacingErrorMessage(rawMessage);
 
       setError(message);
       setResults([]);
@@ -432,7 +454,8 @@ export default function Home() {
         festival_name: festival?.display_name ?? null,
         time_filter: filter,
         now,
-        error: message,
+        error: rawMessage,
+        user_error: message,
         ...trackingContext,
       });
     } finally {
