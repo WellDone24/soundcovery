@@ -134,6 +134,21 @@ def fuzzy_resolve_artist_names(
         normalized_input = normalize_artist_name(raw_name)
         compact_input = normalized_input.replace(" ", "")
 
+        # Exact normalized matches always win over fuzzy matches.
+        # This prevents cases like "the beaches" being fuzzily resolved to
+        # "Beaches" when "The Beaches" exists as an exact normalized artist name.
+        exact_match_name = choices.get(normalized_input)
+
+        if exact_match_name:
+            resolved_names.append(exact_match_name)
+            matches.append({
+                "input": raw_name,
+                "matched_name": exact_match_name,
+                "score": 100.0,
+                "used_fuzzy": False,
+            })
+            continue
+
         # Be conservative for fuzzy matching:
         # - very short inputs like "t" should not become "T. Rex"
         # - low-variety garbage like "gggggggggg" should not become a real artist
