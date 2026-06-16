@@ -1,6 +1,8 @@
 import sys
 import json
 import sqlite3
+import re
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -70,6 +72,20 @@ TEXT_AXIS_PRIORITY = [
 
 def split_input_artists(raw: str) -> list[str]:
     return [x.strip() for x in raw.split(";") if x.strip()]
+
+
+def normalize_artist_name(value: str) -> str:
+    value = unicodedata.normalize("NFD", value)
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+    value = value.lower()
+    value = re.sub(r"""["']""", "", value)
+    value = re.sub(r"[^\w\s]", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def normalize_artist_name_for_exclusion(value: str) -> str:
+    return normalize_artist_name(str(value))
 
 
 def load_artist_matrix(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -683,11 +699,30 @@ def get_recommendations(raw_input: str) -> dict:
 
     profile = resolve_input_artists(matrix, input_artists)
     profile_mbids = set(profile["mbid"])
+    profile_names = set(
+        profile["name"]
+        .astype(str)
+        .map(normalize_artist_name_for_exclusion)
+    )
 
     profile, centers = build_clusters(profile, feature_cols)
 
     candidates = matrix.merge(candidate_set, on="mbid", how="inner")
-    candidates = candidates[~candidates["mbid"].isin(profile_mbids)].copy()
+    candidate_matrix_names = (
+        candidates["name"]
+        .astype(str)
+        .map(normalize_artist_name_for_exclusion)
+    )
+    candidate_set_names = (
+        candidates["candidate_name"]
+        .astype(str)
+        .map(normalize_artist_name_for_exclusion)
+    )
+    candidates = candidates[
+        ~candidates["mbid"].isin(profile_mbids)
+        & ~candidate_matrix_names.isin(profile_names)
+        & ~candidate_set_names.isin(profile_names)
+    ].copy()
 
     if candidates.empty:
         raise ValueError("No candidates with SAEM vectors found.")
