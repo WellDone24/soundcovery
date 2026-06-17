@@ -119,13 +119,22 @@ def fuzzy_resolve_artist_names(
     artist_names: list[str],
 ) -> tuple[list[str], list[dict]]:
     choices = {}
+    compact_choices = {}
 
     for original_name in matrix["name"].dropna().astype(str).drop_duplicates():
         original_name = original_name.strip()
         normalized_name = normalize_artist_name(original_name)
+        compact_name = normalized_name.replace(" ", "")
 
         if normalized_name:
+            # Normalized exact index, e.g. "sum 41" -> "Sum 41".
             choices[normalized_name] = original_name
+
+        if compact_name:
+            # Compact exact index, e.g. "sum41" -> "Sum 41".
+            # Keep the first occurrence to avoid silently changing behavior if
+            # multiple artists collapse to the same compact form.
+            compact_choices.setdefault(compact_name, original_name)
 
     resolved_names = []
     matches = []
@@ -134,7 +143,7 @@ def fuzzy_resolve_artist_names(
         normalized_input = normalize_artist_name(raw_name)
         compact_input = normalized_input.replace(" ", "")
 
-        # Exact normalized matches always win over fuzzy matches.
+        # 1) Exact normalized matches always win over fuzzy matches.
         # This prevents cases like "the beaches" being fuzzily resolved to
         # "Beaches" when "The Beaches" exists as an exact normalized artist name.
         exact_match_name = choices.get(normalized_input)
@@ -146,6 +155,23 @@ def fuzzy_resolve_artist_names(
                 "matched_name": exact_match_name,
                 "score": 100.0,
                 "used_fuzzy": False,
+                "match_type": "exact_normalized",
+            })
+            continue
+
+        # 2) Compact exact matches come before fuzzy matching.
+        # This handles artist names where users omit spaces/punctuation, e.g.
+        # "sum41" -> "Sum 41" or "sum-41" -> "Sum 41".
+        compact_exact_match_name = compact_choices.get(compact_input)
+
+        if compact_exact_match_name:
+            resolved_names.append(compact_exact_match_name)
+            matches.append({
+                "input": raw_name,
+                "matched_name": compact_exact_match_name,
+                "score": 100.0,
+                "used_fuzzy": False,
+                "match_type": "exact_compact",
             })
             continue
 
@@ -162,6 +188,7 @@ def fuzzy_resolve_artist_names(
                 "matched_name": None,
                 "score": None,
                 "used_fuzzy": False,
+                "match_type": "unresolved_too_short_or_low_variety",
             })
             continue
 
@@ -178,6 +205,7 @@ def fuzzy_resolve_artist_names(
                 "matched_name": None,
                 "score": None,
                 "used_fuzzy": False,
+                "match_type": "unresolved_no_fuzzy_match",
             })
             continue
 
@@ -200,6 +228,7 @@ def fuzzy_resolve_artist_names(
                 "matched_name": matched_name,
                 "score": round(float(score), 2),
                 "used_fuzzy": normalized_input != normalize_artist_name(matched_name),
+                "match_type": "fuzzy",
             })
         else:
             resolved_names.append(raw_name)
@@ -208,6 +237,7 @@ def fuzzy_resolve_artist_names(
                 "matched_name": matched_name,
                 "score": round(float(score), 2),
                 "used_fuzzy": False,
+                "match_type": "unresolved_fuzzy_below_threshold",
             })
 
     return resolved_names, matches
