@@ -69,9 +69,33 @@ export default function About() {
         Sometimes that leads to unexpected recommendations.
       </p>
 
-      <p>
+      <p style={paragraphStyle}>
         Hopefully, some of them become great discoveries for you.
       </p>
+
+      <div
+        style={{
+          marginTop: 40,
+          paddingTop: 24,
+          borderTop: "1px solid rgba(255, 255, 255, 0.15)",
+        }}
+      >
+        <p style={{ margin: 0 }}>
+          For festival partnerships, feedback or other enquiries, contact{" "}
+          <a
+            href="mailto:info@soundcovery.com"
+            style={{
+              color: "inherit",
+              fontWeight: 600,
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+            }}
+          >
+            info@soundcovery.com
+          </a>
+          .
+        </p>
+      </div>
     </main>
   );
 }
