@@ -43,8 +43,8 @@ export default function imprint() {
 
         <p>
           Email:{" "}
-          <a href="mailto:get.it.well.done@welldonedecisions.com">
-            get.it.well.done@welldonedecisions.com
+          <a href="mailto:info@soundcovery">
+            info@soundcovery.com
           </a>
         </p>
       </section>
