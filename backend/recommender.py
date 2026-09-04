@@ -33,8 +33,30 @@ RECS_PER_CLUSTER = 5
 
 UNKNOWN_GENRE = "unknown"
 
-GENRE_MISMATCH_PENALTY = 25.0
-UNKNOWN_GENRE_PENALTY = 10.0
+# Genre adjustment mirrors the current artist report:
+# - genre_aligned: same primary genre -> x1.00
+# - genre_adjacent: same primary genre family or explicit adjacent family -> x1.04
+# - cross_genre: otherwise (including missing primary genre) -> x1.10
+#
+# Secondary genres are retained as metadata but do not determine the
+# adjustment class. The recommender keeps its weighted perceptual distance
+# and multi-support bonus.
+GENRE_FAMILY_ADJACENCY = {
+    frozenset(("rock", "metal")),
+    frozenset(("rock", "pop")),
+    frozenset(("pop", "electronic")),
+    frozenset(("rock", "punk")),
+    frozenset(("metal", "punk")),
+    frozenset(("jazz", "soul")),
+    frozenset(("soul", "rnb")),
+    frozenset(("pop", "rnb")),
+}
+
+GENRE_ADJUSTMENT_FACTORS = {
+    "genre_aligned": 1.00,
+    "genre_adjacent": 1.04,
+    "cross_genre": 1.10,
+}
 
 STRONG_MATCH_MAX_SCORE = 35.0
 DECENT_MATCH_MAX_SCORE = 50.0
@@ -317,18 +339,20 @@ def load_genres(conn: sqlite3.Connection) -> pd.DataFrame:
         SELECT
             TRIM(mbid) AS mbid,
             TRIM(primary_genre_id) AS primary_genre,
+            secondary_genre_ids_json,
             confidence,
             enriched_at
         FROM {GENRE_TABLE}
         WHERE mbid IS NOT NULL
-          AND primary_genre_id IS NOT NULL
           AND is_active = 1
         """,
         conn,
     )
 
     if df.empty:
-        return pd.DataFrame(columns=["mbid", "primary_genre"])
+        return pd.DataFrame(
+            columns=["mbid", "primary_genre", "secondary_genre_ids_json"]
+        )
 
     df["primary_genre"] = (
         df["primary_genre"]
@@ -338,8 +362,12 @@ def load_genres(conn: sqlite3.Connection) -> pd.DataFrame:
         .replace("", UNKNOWN_GENRE)
     )
 
-    df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce").fillna(0.0)
-    df["enriched_at_dt"] = pd.to_datetime(df["enriched_at"], errors="coerce")
+    df["confidence"] = pd.to_numeric(
+        df["confidence"], errors="coerce"
+    ).fillna(0.0)
+    df["enriched_at_dt"] = pd.to_datetime(
+        df["enriched_at"], errors="coerce"
+    )
 
     df = (
         df.sort_values(
@@ -349,7 +377,9 @@ def load_genres(conn: sqlite3.Connection) -> pd.DataFrame:
         .drop_duplicates(subset=["mbid"], keep="first")
     )
 
-    return df[["mbid", "primary_genre"]].copy()
+    return df[
+        ["mbid", "primary_genre", "secondary_genre_ids_json"]
+    ].copy()
 
 
 def load_external_links(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -449,6 +479,7 @@ def get_feature_cols(df: pd.DataFrame) -> list[str]:
         "name",
         "candidate_name",
         "primary_genre",
+        "secondary_genre_ids_json",
         "spotify_url",
 
         "festival",
@@ -469,6 +500,109 @@ def get_feature_cols(df: pd.DataFrame) -> list[str]:
         "festival_day",
     }
     return [c for c in df.columns if c not in non_features]
+
+
+def parse_secondary_genres(value) -> list[str]:
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return []
+
+    if isinstance(value, list):
+        return [str(x) for x in value if x]
+
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return []
+
+    if isinstance(parsed, list):
+        return [str(x) for x in parsed if x]
+
+    return []
+
+
+def get_artist_genres(row: pd.Series) -> list[str]:
+    primary = row.get("primary_genre")
+    secondary = parse_secondary_genres(
+        row.get("secondary_genre_ids_json")
+    )
+
+    genres = (
+        [primary]
+        if pd.notna(primary)
+        and primary
+        and str(primary) != UNKNOWN_GENRE
+        else []
+    ) + secondary
+
+    return list(
+        dict.fromkeys(str(g) for g in genres if g)
+    )
+
+
+def genre_family(genre_id: str | None) -> str | None:
+    if genre_id is None:
+        return None
+
+    value = str(genre_id).strip().lower()
+
+    if not value or value == UNKNOWN_GENRE:
+        return None
+
+    return value.split("_", 1)[0]
+
+
+def classify_genre_relationship(
+    reference: pd.Series,
+    candidate: pd.Series,
+) -> str:
+    """
+    Genre relationship aligned with the current artist report.
+
+    Primary genres determine the adjustment class.
+    Secondary genres remain available for explanation only and must not
+    upgrade a cross-genre pair to genre-adjacent.
+    """
+    ref_primary = reference.get("primary_genre")
+    cand_primary = candidate.get("primary_genre")
+
+    ref_primary = (
+        str(ref_primary).strip()
+        if pd.notna(ref_primary)
+        and str(ref_primary).strip()
+        and str(ref_primary).strip() != UNKNOWN_GENRE
+        else None
+    )
+    cand_primary = (
+        str(cand_primary).strip()
+        if pd.notna(cand_primary)
+        and str(cand_primary).strip()
+        and str(cand_primary).strip() != UNKNOWN_GENRE
+        else None
+    )
+
+    # Same conservative behavior as the report:
+    # if primary genre is missing, do not grant a softer genre class.
+    if not ref_primary or not cand_primary:
+        return "cross_genre"
+
+    if ref_primary == cand_primary:
+        return "genre_aligned"
+
+    ref_family = genre_family(ref_primary)
+    cand_family = genre_family(cand_primary)
+
+    if ref_family and cand_family and ref_family == cand_family:
+        return "genre_adjacent"
+
+    if (
+        ref_family
+        and cand_family
+        and frozenset((ref_family, cand_family))
+        in GENRE_FAMILY_ADJACENCY
+    ):
+        return "genre_adjacent"
+
+    return "cross_genre"
 
 
 def axis_weight_vector(feature_cols: list[str]) -> np.ndarray:
@@ -531,11 +665,6 @@ def join_naturally(parts: list[str]) -> str:
 def match_quality(score: float, cluster_context: str) -> str:
     score = float(score)
 
-    if cluster_context == "no_close_genre_hits":
-        if score <= WEAK_MATCH_MAX_SCORE:
-            return "weak"
-        return "very_weak"
-
     if score <= STRONG_MATCH_MAX_SCORE:
         return "strong"
     if score <= DECENT_MATCH_MAX_SCORE:
@@ -554,12 +683,6 @@ def build_reason(
     quality: str,
     cluster_context: str,
 ) -> str:
-    if cluster_context == "no_close_genre_hits":
-        return (
-            f"An exploratory pick from the {support_artist} side of your taste. "
-            f"The lineup has no close genre match here, so this should be treated as a weak fit."
-        )
-
     if quality == "very_weak":
         return (
             f"A very loose match for {support_artist}. "
@@ -919,103 +1042,178 @@ def score_candidates(
     center_arr = weighted_values(centers, feature_cols)
     profile_arr = weighted_values(profile, feature_cols)
 
-    cluster_dists = cdist(candidate_arr, center_arr, metric="euclidean")
-    profile_dists = cdist(candidate_arr, profile_arr, metric="euclidean")
+    cluster_dists = cdist(
+        candidate_arr,
+        center_arr,
+        metric="euclidean",
+    )
+    profile_dists = cdist(
+        candidate_arr,
+        profile_arr,
+        metric="euclidean",
+    )
 
     out = candidates.copy()
     out["best_cluster"] = cluster_dists.argmin(axis=1)
     out["raw_distance"] = cluster_dists.min(axis=1)
     out["nearest_profile_distance"] = profile_dists.min(axis=1)
 
-    main_genres = cluster_main_genres(profile)
-    contexts = cluster_contexts(candidates, profile)
-
-    genre_fits = []
+    support_artists = []
+    genre_relations = []
+    genre_factors = []
     genre_penalties = []
+    genre_fits = []
     cluster_context_values = []
 
-    for _, row in out.iterrows():
-        cluster_id = int(row["best_cluster"])
-        expected_genre = main_genres.get(cluster_id, UNKNOWN_GENRE)
-        candidate_genre = row.get("primary_genre", UNKNOWN_GENRE)
-
-        if pd.isna(candidate_genre) or str(candidate_genre).strip() == "":
-            candidate_genre = UNKNOWN_GENRE
-
-        cluster_context = contexts.get(cluster_id, "unknown_reference_genre")
-
-        if expected_genre == UNKNOWN_GENRE:
-            genre_fit = "unknown_reference_genre"
-            penalty = 0.0
-        elif candidate_genre == UNKNOWN_GENRE:
-            genre_fit = "unknown_candidate_genre"
-            penalty = UNKNOWN_GENRE_PENALTY
-        elif candidate_genre == expected_genre:
-            genre_fit = "exact"
-            penalty = 0.0
-        else:
-            genre_fit = "mismatch"
-            penalty = GENRE_MISMATCH_PENALTY
-
-        genre_fits.append(genre_fit)
-        genre_penalties.append(penalty)
-        cluster_context_values.append(cluster_context)
-
-    out["genre_fit"] = genre_fits
-    out["genre_penalty"] = genre_penalties
-    out["cluster_context"] = cluster_context_values
-
-    support_artists = []
     multi_support_artists = []
     multi_support_counts = []
     multi_support_bonuses = []
 
     weights = axis_weight_vector(feature_cols)
 
-    # Use positional indices for profile_dists. Do not rely on the pandas index,
-    # because candidates may have been filtered and may carry non-contiguous indices.
     for pos, (_, row) in enumerate(out.iterrows()):
         cluster_id = int(row["best_cluster"])
-        members = profile[profile["taste_cluster"] == cluster_id]
 
-        member_arr = weighted_values(members, feature_cols)
-        candidate_vec = (
-            row[feature_cols].astype(float).to_numpy().reshape(1, -1) * weights
+        members = profile[
+            profile["taste_cluster"] == cluster_id
+        ]
+
+        member_arr = weighted_values(
+            members,
+            feature_cols,
         )
 
-        dists = cdist(candidate_vec, member_arr, metric="euclidean").ravel()
+        candidate_vec = (
+            row[feature_cols]
+            .astype(float)
+            .to_numpy()
+            .reshape(1, -1)
+            * weights
+        )
+
+        dists = cdist(
+            candidate_vec,
+            member_arr,
+            metric="euclidean",
+        ).ravel()
+
         nearest_idx = int(np.argmin(dists))
-        support_artists.append(members.iloc[nearest_idx]["name"])
+        support_row = members.iloc[nearest_idx]
+        support_artist = str(support_row["name"])
+        support_artists.append(support_artist)
+
+        # Report-style genre relationship relative to the nearest
+        # supporting input artist.
+        genre_relation = classify_genre_relationship(
+            reference=support_row,
+            candidate=row,
+        )
+        genre_factor = float(
+            GENRE_ADJUSTMENT_FACTORS[genre_relation]
+        )
+
+        base_distance = float(row["raw_distance"])
+        adjusted_distance = base_distance * genre_factor
+        genre_penalty = adjusted_distance - base_distance
+
+        genre_relations.append(genre_relation)
+        genre_factors.append(genre_factor)
+        genre_penalties.append(genre_penalty)
+
+        # Keep a compact compatibility field for the existing API.
+        genre_fits.append(
+            {
+                "genre_aligned": "aligned",
+                "genre_adjacent": "adjacent",
+                "cross_genre": "cross_genre",
+            }[genre_relation]
+        )
+
+        cluster_context_values.append(
+            "genre_context_available"
+            if (
+                str(support_row.get("primary_genre", UNKNOWN_GENRE)) != UNKNOWN_GENRE
+                and str(row.get("primary_genre", UNKNOWN_GENRE)) != UNKNOWN_GENRE
+            )
+            else "incomplete_genre_context"
+        )
 
         all_profile_distances = profile_dists[pos]
-        sorted_indices = np.argsort(all_profile_distances)
+        sorted_indices = np.argsort(
+            all_profile_distances
+        )
 
         close_supports = []
+
         for idx in sorted_indices:
-            distance = float(all_profile_distances[idx])
+            distance = float(
+                all_profile_distances[idx]
+            )
+
             if distance <= MULTI_SUPPORT_DISTANCE_MAX:
-                close_supports.append(str(profile.iloc[idx]["name"]))
+                close_supports.append(
+                    str(profile.iloc[idx]["name"])
+                )
 
         support_count = len(close_supports)
         bonus = min(
-            max(0, support_count - 1) * MULTI_SUPPORT_BONUS_PER_EXTRA_MATCH,
+            max(
+                0,
+                support_count - 1,
+            )
+            * MULTI_SUPPORT_BONUS_PER_EXTRA_MATCH,
             MULTI_SUPPORT_BONUS_MAX,
         )
 
-        multi_support_artists.append(close_supports)
-        multi_support_counts.append(support_count)
-        multi_support_bonuses.append(bonus)
+        multi_support_artists.append(
+            close_supports
+        )
+        multi_support_counts.append(
+            support_count
+        )
+        multi_support_bonuses.append(
+            bonus
+        )
 
     out["support_artist"] = support_artists
-    out["multi_support_artists"] = multi_support_artists
-    out["multi_support_count"] = multi_support_counts
-    out["multi_support_bonus"] = multi_support_bonuses
+    out["genre_relation"] = genre_relations
+    out["genre_adjustment_factor"] = genre_factors
+
+    # Kept for backwards compatibility with consumers that already
+    # expect genre_penalty. It is now the effective multiplicative
+    # adjustment expressed as score points, not a fixed +25 / +10.
+    out["genre_penalty"] = genre_penalties
+    out["genre_fit"] = genre_fits
+    out["cluster_context"] = cluster_context_values
+
+    out["multi_support_artists"] = (
+        multi_support_artists
+    )
+    out["multi_support_count"] = (
+        multi_support_counts
+    )
+    out["multi_support_bonus"] = (
+        multi_support_bonuses
+    )
+
+    out["adjusted_distance"] = (
+        out["raw_distance"]
+        * out["genre_adjustment_factor"]
+    )
+
     out["final_score"] = (
-        out["raw_distance"] + out["genre_penalty"] - out["multi_support_bonus"]
+        out["adjusted_distance"]
+        - out["multi_support_bonus"]
     )
 
     return out.sort_values(
-        ["best_cluster", "final_score", "raw_distance", "nearest_profile_distance"]
+        [
+            "best_cluster",
+            "final_score",
+            "adjusted_distance",
+            "raw_distance",
+            "nearest_profile_distance",
+        ]
     ).reset_index(drop=True)
 
 def pick_top_per_cluster(scored: pd.DataFrame, n_clusters: int) -> pd.DataFrame:
@@ -1086,7 +1284,12 @@ def build_recommendation_dict(
         "reason": reason,
         "score": round(float(row["final_score"]), 4),
         "raw_distance": round(float(row["raw_distance"]), 4),
+        "adjusted_distance": round(float(row["adjusted_distance"]), 4),
         "genre_penalty": round(float(row["genre_penalty"]), 4),
+        "genre_adjustment_factor": round(
+            float(row["genre_adjustment_factor"]), 4
+        ),
+        "genre_relation": row["genre_relation"],
         "multi_support_bonus": round(float(row.get("multi_support_bonus", 0.0)), 4),
         "match_quality": quality,
         "genre_fit": row["genre_fit"],
