@@ -628,7 +628,7 @@ export default function Home() {
             handleSubmit();
           }
         }}
-        placeholder="Try: Bring Me The Horizon, Spiritbox, Sleep Token"
+        placeholder="Try: The 1975, Medium Build"
         style={{
           width: "100%",
           padding: "16px 18px",
