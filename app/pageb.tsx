@@ -24,11 +24,18 @@ type FestivalsResponse = {
   error?: string;
 };
 
-type Appearance = {
+type Timetable = {
+  festival?: string | null;
+  day?: string | null;
+  weekday?: string | null;
   date?: string | null;
   stage?: string | null;
   start_time?: string | null;
   end_time?: string | null;
+  artist_url?: string | null;
+  source_artist_name?: string | null;
+  matched_artist_name?: string | null;
+  match_status?: string | null;
 };
 
 type Recommendation = {
@@ -36,10 +43,7 @@ type Recommendation = {
   reason: string;
   match_quality?: string | null;
   spotify_url?: string | null;
-  artist_url?: string | null;
-  appearances?: Appearance[];
-  // Temporary backend fallback while older responses may still expose one slot.
-  timetable?: Appearance | null;
+  timetable?: Timetable | null;
   multi_support_artists?: string[];
   multi_support_count?: number;
   multi_support_bonus?: number;
@@ -204,19 +208,6 @@ function getMatchBadge(matchQuality?: string | null): string {
   if (matchQuality === "strong") return "🟢 Strong match";
   if (matchQuality === "decent") return "🟡 Worth a try";
   return "🔵 Discovery pick";
-}
-
-function getAppearanceDateLabel(date?: string | null): string | null {
-  if (!date) return null;
-
-  const parsed = new Date(`${date.slice(0, 10)}T12:00:00`);
-  if (Number.isNaN(parsed.getTime())) return date;
-
-  return new Intl.DateTimeFormat("en", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(parsed);
 }
 
 export default function Home() {
@@ -785,186 +776,117 @@ export default function Home() {
             </p>
           )}
 
-          {results.map((band) => {
-            const appearances =
-              band.appearances && band.appearances.length > 0
-                ? band.appearances
-                : band.timetable
-                  ? [band.timetable]
-                  : [];
-
-            return (
-              <article
-                key={band.name}
+          {results.map((band) => (
+            <article
+              key={`${band.name}-${band.timetable?.date ?? ""}-${band.timetable?.start_time ?? ""}`}
+              style={{
+                marginTop: 16,
+                padding: 16,
+                border: "1px solid #333",
+                borderRadius: 16,
+                background: "#0f0f0f",
+              }}
+            >
+              <p
                 style={{
-                  marginTop: 16,
-                  padding: 16,
-                  border: "1px solid #333",
-                  borderRadius: 16,
-                  background: "#0f0f0f",
+                  margin: "0 0 8px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  opacity: 0.9,
                 }}
               >
+                {getMatchBadge(band.match_quality)}
+              </p>
+
+              <strong
+                style={{
+                  display: "block",
+                  fontSize: 18,
+                  lineHeight: 1.2,
+                  marginBottom: 6,
+                }}
+              >
+                {band.name}
+              </strong>
+
+              {band.timetable?.start_time && (
                 <p
                   style={{
-                    margin: "0 0 8px",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    opacity: 0.9,
+                    marginTop: 0,
+                    marginBottom: 10,
+                    fontSize: 14,
+                    opacity: 0.75,
                   }}
                 >
-                  {getMatchBadge(band.match_quality)}
-                </p>
-
-                <strong
-                  style={{
-                    display: "block",
-                    fontSize: 18,
-                    lineHeight: 1.2,
-                    marginBottom: 6,
-                  }}
-                >
-                  {band.name}
-                </strong>
-
-                {appearances.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: 0,
-                      marginBottom: 10,
-                      display: "grid",
-                      gap: appearances.length > 1 ? 5 : 0,
-                    }}
-                  >
-                    {appearances.map((appearance, index) => {
-                      const dateLabel = getAppearanceDateLabel(appearance.date);
-                      const start = appearance.start_time?.slice(0, 5);
-                      const end = appearance.end_time?.slice(0, 5);
-
-                      return (
-                        <p
-                          key={`${appearance.date ?? ""}-${appearance.start_time ?? ""}-${appearance.stage ?? ""}-${index}`}
-                          style={{
-                            margin: 0,
-                            fontSize: 14,
-                            opacity: 0.75,
-                          }}
-                        >
-                          {dateLabel && (
-                            <strong style={{ opacity: 0.95 }}>
-                              {dateLabel} ·{" "}
-                            </strong>
-                          )}
-                          {start ?? "Time TBA"}
-                          {end && `–${end}`}
-                          {appearance.stage && ` · ${appearance.stage}`}
-                        </p>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <p style={{ marginTop: 0 }}>
-                  {band.reason}
-                </p>
-
-                {band.multi_support_count && band.multi_support_count > 1 && (
-                  <p
-                    style={{
-                      margin: "8px 0 10px",
-                      opacity: 0.72,
-                      fontSize: 13,
-                      lineHeight: 1.35,
-                    }}
-                  >
-                    Matches multiple artists you entered:{" "}
-                    <strong style={{ color: "#fff", opacity: 1 }}>
-                      {band.multi_support_artists?.join(", ")}
+                  {band.timetable.weekday && (
+                    <strong style={{ opacity: 0.95 }}>
+                      {band.timetable.weekday} ·{" "}
                     </strong>
-                    .
-                  </p>
-                )}
+                  )}
+                  {band.timetable.start_time.slice(0, 5)}
+                  {band.timetable.end_time &&
+                    `–${band.timetable.end_time.slice(0, 5)}`}
+                  {band.timetable.stage && ` · ${band.timetable.stage}`}
+                </p>
+              )}
 
-                {(band.spotify_url || band.artist_url) && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                      marginTop: 6,
-                    }}
-                  >
-                    {band.spotify_url && (
-                      <a
-                        href={band.spotify_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => {
-                          const trackingContext =
-                            trackingContextRef.current ?? getTrackingContext();
+              <p style={{ marginTop: 0 }}>
+                {band.reason}
+              </p>
 
-                          track("spotify_clicked", {
-                            query_band: lastQuery,
-                            recommended_band: band.name,
-                            festival_slug: selectedFestivalSlug,
-                            festival_name: selectedFestival?.display_name ?? null,
-                            time_filter: timeFilter,
-                            match_quality: band.match_quality,
-                            ...trackingContext,
-                          });
-                        }}
-                        style={{
-                          display: "inline-block",
-                          padding: "6px 12px",
-                          background: "#1DB954",
-                          color: "white",
-                          borderRadius: 999,
-                          textDecoration: "none",
-                          fontSize: 13,
-                          fontWeight: 600,
-                        }}
-                      >
-                        ▶ Listen on Spotify
-                      </a>
-                    )}
+              {band.multi_support_count && band.multi_support_count > 1 && (
+                <p
+                  style={{
+                    margin: "8px 0 10px",
+                    opacity: 0.72,
+                    fontSize: 13,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  Matches multiple artists you entered: {" "}
+                  <strong style={{ color: "#fff", opacity: 1 }}>
+                    {band.multi_support_artists?.join(", ")}
+                  </strong>
+                  .
+                </p>
+              )}
 
-                    {band.artist_url && (
-                      <a
-                        href={band.artist_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => {
-                          const trackingContext =
-                            trackingContextRef.current ?? getTrackingContext();
+              {band.spotify_url && (
+                <a
+                  href={band.spotify_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => {
+                    const trackingContext =
+                      trackingContextRef.current ?? getTrackingContext();
 
-                          track("artist_page_clicked", {
-                            query_band: lastQuery,
-                            recommended_band: band.name,
-                            festival_slug: selectedFestivalSlug,
-                            festival_name: selectedFestival?.display_name ?? null,
-                            time_filter: timeFilter,
-                            match_quality: band.match_quality,
-                            ...trackingContext,
-                          });
-                        }}
-                        style={{
-                          display: "inline-block",
-                          padding: "6px 12px",
-                          border: "1px solid #555",
-                          color: "#fff",
-                          borderRadius: 999,
-                          textDecoration: "none",
-                          fontSize: 13,
-                          fontWeight: 600,
-                        }}
-                      >
-                        Festival artist page
-                      </a>
-                    )}
-                  </div>
-                )}
-              </article>
-            );
-          })}
+                    track("spotify_clicked", {
+                      query_band: lastQuery,
+                      recommended_band: band.name,
+                      festival_slug: selectedFestivalSlug,
+                      festival_name: selectedFestival?.display_name ?? null,
+                      time_filter: timeFilter,
+                      match_quality: band.match_quality,
+                      ...trackingContext,
+                    });
+                  }}
+                  style={{
+                    display: "inline-block",
+                    marginTop: 6,
+                    padding: "6px 12px",
+                    background: "#1DB954",
+                    color: "white",
+                    borderRadius: 999,
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 600,
+                  }}
+                >
+                  ▶ Listen on Spotify
+                </a>
+              )}
+            </article>
+          ))}
         </section>
       )}
 

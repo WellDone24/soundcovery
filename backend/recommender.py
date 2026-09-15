@@ -321,7 +321,8 @@ def load_candidate_set(
         f"""
         SELECT DISTINCT
             TRIM(mbid) AS mbid,
-            TRIM(name) AS candidate_name
+            TRIM(name) AS candidate_name,
+            TRIM(artist_url) AS artist_url
         FROM {ARTIST_SET_TABLE}
         WHERE set_name = ?
           AND set_version = ?
@@ -407,22 +408,24 @@ def load_timetable(
     set_name: str,
     set_version: str,
 ) -> pd.DataFrame:
+    """
+    Load all matched timetable appearances for the festival.
+
+    Important:
+    - one artist may have multiple timetable rows
+    - do not deduplicate by MBID here
+    - the recommendation matrix stays one row per artist; timetable rows are
+      only used for time eligibility and appearance metadata
+    - artist_url lives on artist_sets / artist level, not on appearances
+    """
     df = pd.read_sql_query(
         f"""
         SELECT
             TRIM(mbid) AS mbid,
-            festival,
-            day,
-            weekday,
             date,
             stage,
-            source_artist_name,
-            matched_artist_name,
             start_time,
-            end_time,
-            artist_url,
-            is_placeholder,
-            match_status
+            end_time
         FROM {TIMETABLE_TABLE}
         WHERE set_name = ?
           AND set_version = ?
@@ -436,26 +439,19 @@ def load_timetable(
     if df.empty:
         return pd.DataFrame(columns=[
             "mbid",
-            "festival",
-            "day",
-            "weekday",
             "date",
             "stage",
-            "source_artist_name",
-            "matched_artist_name",
             "start_time",
             "end_time",
-            "artist_url",
-            "is_placeholder",
-            "match_status",
         ])
 
-    df = df.sort_values(["date", "start_time", "stage"], na_position="last")
-
-    # MVP behavior:
-    # Keep one timetable row per artist. If an artist has multiple appearances,
-    # only the earliest one is returned.
-    return df.drop_duplicates(subset=["mbid"], keep="first").copy()
+    return (
+        df.sort_values(
+            ["date", "start_time", "stage"],
+            na_position="last",
+        )
+        .reset_index(drop=True)
+    )
 
 
 def load_axis_text_fragments(conn: sqlite3.Connection) -> dict[tuple[str, str, str], str]:
@@ -1032,6 +1028,74 @@ def apply_time_filter(
     return out.copy()
 
 
+
+def eligible_artist_mbids(
+    timetable: pd.DataFrame,
+    time_filter: str = "upcoming",
+    selected_date: str | None = None,
+    now: str | None = None,
+) -> tuple[set[str], pd.DataFrame]:
+    """
+    Apply the requested time filter on appearance rows and return:
+    - MBIDs that have at least one eligible appearance
+    - the filtered appearance rows used for the API response
+
+    This keeps recommendation scoring strictly on artist level while allowing
+    any artist to have multiple valid slots.
+    """
+    filtered = apply_time_filter(
+        candidates=timetable,
+        time_filter=time_filter,
+        selected_date=selected_date,
+        now=now,
+    )
+
+    if filtered.empty:
+        return set(), filtered
+
+    mbids = set(
+        filtered["mbid"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+    mbids.discard("")
+
+    return mbids, filtered
+
+
+def build_appearances_by_mbid(timetable: pd.DataFrame) -> dict[str, list[dict]]:
+    """
+    Build compact, frontend-ready timetable metadata grouped by artist MBID.
+    """
+    if timetable.empty:
+        return {}
+
+    timetable = timetable.sort_values(
+        ["date", "start_time", "stage"],
+        na_position="last",
+    )
+
+    result: dict[str, list[dict]] = {}
+
+    for mbid, group in timetable.groupby("mbid", sort=False):
+        key = str(mbid).strip()
+        if not key:
+            continue
+
+        result[key] = [
+            {
+                "date": none_if_nan(row.get("date")),
+                "stage": none_if_nan(row.get("stage")),
+                "start_time": none_if_nan(row.get("start_time")),
+                "end_time": none_if_nan(row.get("end_time")),
+            }
+            for _, row in group.iterrows()
+        ]
+
+    return result
+
+
 def score_candidates(
     candidates: pd.DataFrame,
     profile: pd.DataFrame,
@@ -1255,12 +1319,15 @@ def build_recommendation_dict(
     centers: pd.DataFrame,
     axis_fragments: dict[tuple[str, str, str], str],
     feature_cols: list[str],
+    appearances_by_mbid: dict[str, list[dict]],
 ) -> dict:
     name = row.get("candidate_name") or row["name"]
     support = row["support_artist"]
     genre = row.get("primary_genre", UNKNOWN_GENRE)
     spotify_url = row.get("spotify_url")
+    artist_url = row.get("artist_url")
     cluster_id = int(row["best_cluster"])
+    mbid = str(row["mbid"]).strip()
 
     cluster_center = centers[centers["taste_cluster"] == cluster_id].iloc[0]
 
@@ -1278,6 +1345,13 @@ def build_recommendation_dict(
         quality=quality,
         cluster_context=row["cluster_context"],
     )
+
+    appearances = appearances_by_mbid.get(mbid, [])
+
+    # Backwards-compatible fallback for the current frontend:
+    # timetable contains the first currently relevant appearance.
+    # New frontend code should use appearances[].
+    first_appearance = appearances[0] if appearances else None
 
     return {
         "name": name,
@@ -1300,19 +1374,9 @@ def build_recommendation_dict(
         "multi_support_count": int(row.get("multi_support_count", 0)),
         "primary_genre": genre,
         "spotify_url": spotify_url if pd.notna(spotify_url) else None,
-        "timetable": {
-            "festival": none_if_nan(row.get("festival")),
-            "day": none_if_nan(row.get("day")),
-            "weekday": none_if_nan(row.get("weekday")),
-            "date": none_if_nan(row.get("date")),
-            "stage": none_if_nan(row.get("stage")),
-            "start_time": none_if_nan(row.get("start_time")),
-            "end_time": none_if_nan(row.get("end_time")),
-            "artist_url": none_if_nan(row.get("artist_url")),
-            "source_artist_name": none_if_nan(row.get("source_artist_name")),
-            "matched_artist_name": none_if_nan(row.get("matched_artist_name")),
-            "match_status": none_if_nan(row.get("match_status")),
-        },
+        "artist_url": artist_url if pd.notna(artist_url) else None,
+        "timetable": first_appearance,
+        "appearances": appearances,
     }
 
 
@@ -1322,6 +1386,7 @@ def build_cluster_groups(
     centers: pd.DataFrame,
     axis_fragments: dict[tuple[str, str, str], str],
     feature_cols: list[str],
+    appearances_by_mbid: dict[str, list[dict]],
 ) -> list[dict]:
     main_genres = cluster_main_genres(profile)
     support_labels = cluster_support_labels(profile)
@@ -1345,6 +1410,7 @@ def build_cluster_groups(
                 centers=centers,
                 axis_fragments=axis_fragments,
                 feature_cols=feature_cols,
+                appearances_by_mbid=appearances_by_mbid,
             )
             for _, row in group_rows.iterrows()
         ]
@@ -1426,7 +1492,6 @@ def get_recommendations(
 
     matrix = matrix.merge(genres, on="mbid", how="left")
     matrix = matrix.merge(external_links, on="mbid", how="left")
-    matrix = matrix.merge(timetable, on="mbid", how="left")
 
     matrix["primary_genre"] = (
         matrix["primary_genre"]
@@ -1482,17 +1547,28 @@ def get_recommendations(
     # should still work. In that case, ignore time filters internally.
     effective_time_filter = time_filter
     time_filter_applied = True
+    relevant_timetable = timetable.copy()
 
     if not has_timetable:
         effective_time_filter = "all"
         time_filter_applied = False
+    elif (effective_time_filter or "upcoming").strip().lower() == "all":
+        # "all" is lineup mode: keep every candidate artist from artist_sets.
+        # Timetable metadata is attached where available.
+        relevant_timetable = timetable.copy()
+    else:
+        eligible_mbids, relevant_timetable = eligible_artist_mbids(
+            timetable=timetable,
+            time_filter=effective_time_filter,
+            selected_date=selected_date,
+            now=now,
+        )
 
-    candidates = apply_time_filter(
-        candidates=candidates,
-        time_filter=effective_time_filter,
-        selected_date=selected_date,
-        now=now,
-    )
+        candidates = candidates[
+            candidates["mbid"].isin(eligible_mbids)
+        ].copy()
+
+    appearances_by_mbid = build_appearances_by_mbid(relevant_timetable)
 
     if candidates.empty:
         return {
@@ -1522,6 +1598,7 @@ def get_recommendations(
         centers=centers,
         axis_fragments=axis_fragments,
         feature_cols=feature_cols,
+        appearances_by_mbid=appearances_by_mbid,
     )
 
     flat_recommendations = []
