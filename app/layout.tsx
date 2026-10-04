@@ -6,13 +6,16 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://soundcovery.com"),
-
-  title: "Soundcovery",
-  description: "Find the artists you shouldn't miss",
-
+  title: {
+    default: "Soundcovery — music discovery by similarity",
+    template: "%s — Soundcovery",
+  },
+  description:
+    "Find musically relevant artists across festival lineups and explore structured artist analysis beyond popularity metrics.",
   openGraph: {
-    title: "Soundcovery",
-    description: "Find the artists you shouldn't miss",
+    title: "Soundcovery — music discovery by similarity",
+    description:
+      "Find musically relevant artists across festival lineups and explore structured artist analysis beyond popularity metrics.",
     url: "https://soundcovery.com",
     siteName: "Soundcovery",
     locale: "en_US",
@@ -26,14 +29,13 @@ export const metadata: Metadata = {
       },
     ],
   },
-
   twitter: {
     card: "summary_large_image",
-    title: "Soundcovery",
-    description: "Find the artists you shouldn't miss",
+    title: "Soundcovery — music discovery by similarity",
+    description:
+      "Find musically relevant artists across festival lineups and explore structured artist analysis beyond popularity metrics.",
     images: ["/og-image.png"],
   },
-
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon.ico",
@@ -47,13 +49,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className="h-full antialiased dark"
-    >
-      <body className="min-h-full flex flex-col bg-black text-white font-sans">
-        {children}
-      </body>
+    <html lang="en" className="h-full antialiased dark">
+      <body>{children}</body>
     </html>
   );
 }
