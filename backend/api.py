@@ -1,6 +1,8 @@
 import os
 import json
+import logging
 import sqlite3
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import pymysql
@@ -10,9 +12,21 @@ from pydantic import BaseModel, Field
 
 from recommender import get_recommendations, DB_PATH
 from festival_loader import build_festivals_response
+from prod_db_sync import ProdDatabaseSync
 
 
-app = FastAPI(title="Soundcovery Recommender API")
+logger = logging.getLogger(__name__)
+prod_db_sync = ProdDatabaseSync(DB_PATH)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fail closed on startup in S3 mode; do not accidentally serve a stale bundled DB.
+    prod_db_sync.refresh(force=True)
+    yield
+
+
+app = FastAPI(title="Soundcovery Recommender API", lifespan=lifespan)
 
 
 app.add_middleware(
@@ -39,7 +53,16 @@ class TrackRequest(BaseModel):
     payload: dict = Field(default_factory=dict)
 
 
+def check_for_database_update():
+    """Check for newer snapshots while retaining the previous verified DB on error."""
+    try:
+        prod_db_sync.refresh()
+    except Exception:
+        logger.warning("Serving last verified DB; bucket refresh failed", exc_info=True)
+
+
 def get_saem_connection():
+    check_for_database_update()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -133,6 +156,10 @@ def health():
         result["ok"] = False
         result["saem_db_error"] = str(e)
 
+    result["prod_db_sync"] = prod_db_sync.status()
+    if result["prod_db_sync"]["last_error"] is not None:
+        result["ok"] = False
+
     return result
 
 
@@ -169,6 +196,8 @@ def recommend(request: RecommendRequest):
         }
 
     try:
+        # The recommender opens its own connections; refresh before invoking it.
+        check_for_database_update()
         return get_recommendations(
             raw_input=band,
             festival_slug=request.festival,
