@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from threading import Lock
+import ipaddress
 import os
 import time
 
@@ -61,10 +62,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if ENABLED:
             peer = request.client.host if request.client else "unknown"
             if TRUST_PROXY:
-                forwarded = request.headers.get("x-forwarded-for", "")
+                # Railway public HTTP edge replaces X-Real-IP. Enable this
+                # only for edge-only services without private/TCP callers.
+                forwarded = request.headers.get("x-real-ip", "").strip()
                 if forwarded:
-                    # Enable only when the edge removes untrusted client-supplied headers.
-                    peer = forwarded.split(",")[0].strip()[:64] or peer
+                    try:
+                        peer = str(ipaddress.ip_address(forwarded))
+                    except ValueError:
+                        pass
             now = time.monotonic()
             with self._lock:
                 if now - self._last_cleanup > 3600:
