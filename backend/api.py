@@ -2,13 +2,15 @@ import os
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import pymysql
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
+from security import SecurityMiddleware
 
 from recommender import get_recommendations, DB_PATH
 from festival_loader import build_festivals_response
@@ -26,30 +28,39 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Soundcovery Recommender API", lifespan=lifespan)
+app = FastAPI(title="Soundcovery Recommender API", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(SecurityMiddleware)
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        x.strip() for x in os.getenv(
+            "SOUNDCOVERY_ALLOWED_ORIGINS",
+            "https://soundcovery.com,https://www.soundcovery.com"
+        ).split(",") if x.strip()
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 # Origins später anpassen, wenn Frontend deployed ist
 
 
 class RecommendRequest(BaseModel):
-    band: str
-    festival: str | None = None
-    time_filter: str = "upcoming"
-    selected_date: str | None = None
-    now: str | None = None
+    model_config = ConfigDict(extra="forbid")
+    band: str = Field(min_length=1, max_length=300)
+    festival: str | None = Field(default=None, max_length=120)
+    time_filter: str = Field(default="upcoming", pattern="^(upcoming|all|today|date)$")
+    selected_date: str | None = Field(default=None, max_length=35)
+    now: str | None = Field(default=None, max_length=40)
 
 
 class TrackRequest(BaseModel):
-    session_id: str | None = None
-    event_type: str
+    model_config = ConfigDict(extra="forbid")
+    session_id: str | None = Field(default=None, max_length=128)
+    event_type: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z][a-zA-Z0-9_:-]*$")
     payload: dict = Field(default_factory=dict)
 
 
@@ -86,7 +97,22 @@ def get_tracking_connection():
     )
 
 
+_events_initialized = False
+_events_lock = threading.Lock()
+
+
 def ensure_events_table():
+    global _events_initialized
+    if _events_initialized:
+        return
+    with _events_lock:
+        if _events_initialized:
+            return
+        _create_events_table()
+        _events_initialized = True
+
+
+def _create_events_table():
     conn = get_tracking_connection()
 
     try:
@@ -138,9 +164,9 @@ def health():
         conn = get_tracking_connection()
         conn.close()
         result["tracking"] = "db connected"
-    except Exception as e:
+    except Exception:
         result["ok"] = False
-        result["tracking_error"] = str(e)
+        result["tracking"] = "unavailable"
 
     try:
         conn = get_saem_connection()
@@ -152,13 +178,14 @@ def health():
             }
         finally:
             conn.close()
-    except Exception as e:
+    except Exception:
         result["ok"] = False
-        result["saem_db_error"] = str(e)
+        result["saem_db"] = "unavailable"
 
-    result["prod_db_sync"] = prod_db_sync.status()
-    if result["prod_db_sync"]["last_error"] is not None:
+    sync = prod_db_sync.status()
+    if sync["last_error"] is not None:
         result["ok"] = False
+    result["prod_db_sync"] = {"source": sync["source"], "healthy": sync["last_error"] is None}
 
     return result
 
@@ -173,9 +200,10 @@ def festivals():
         finally:
             conn.close()
 
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to fetch festivals")
         return {
-            "error": str(e),
+            "error": "Service temporarily unavailable",
             "festivals": [],
             "default_festival_slug": None,
         }
@@ -206,9 +234,10 @@ def recommend(request: RecommendRequest):
             now=request.now,
         )
 
-    except Exception as e:
+    except Exception:
+        logger.exception("Recommendation request failed")
         return {
-            "error": str(e),
+            "error": "Recommendation temporarily unavailable",
             "recommendations": [],
             "recommendation_groups": [],
             "festival": request.festival,
@@ -230,8 +259,9 @@ def track(request: TrackRequest):
             "ok": True,
         }
 
-    except Exception as e:
+    except Exception:
+        logger.exception("Tracking request failed")
         return {
             "ok": False,
-            "error": str(e),
+            "error": "Tracking temporarily unavailable",
         }
