@@ -1,7 +1,7 @@
 """Bounded, toggleable, one-instance application-layer abuse mitigation.
 
 IP keys are based on the socket peer by default. When behind Railway's edge,
-X-Forwarded-For may be used only by opting into SOUNDCOVERY_TRUST_PROXY=1.
+X-Real-IP may be used only by opting into SOUNDCOVERY_TRUST_PROXY=1.
 In-memory limits must be replaced with shared storage before scaling replicas.
 """
 from collections import defaultdict, deque
@@ -86,7 +86,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                             allowed = False
                             break
                 if len(self._events) > MAX_KEYS:
-                    self._events.clear()
+                    # Evict oldest idle client buckets; never reset global counts.
+                    candidates = [(q[-1] if q else float('-inf'), key)
+                                  for key, q in self._events.items()
+                                  if key[0] != 'global']
+                    candidates.sort(key=lambda item: item[0])
+                    for _, key in candidates[:len(self._events) - MAX_KEYS]:
+                        self._events.pop(key, None)
             if not allowed:
                 return JSONResponse(
                     {"error": "Too many requests"}, status_code=429,

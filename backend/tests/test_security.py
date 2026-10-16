@@ -74,3 +74,13 @@ def test_proxy_trust_opt_in_distinguishes_visitors(monkeypatch):
         for i in range(9):
             assert c.get("/health", headers={"x-real-ip": "192.0.2.1"}).status_code == 200
         assert c.get("/health", headers={"x-real-ip": "192.0.2.1"}).status_code == 429
+
+
+def test_key_pressure_cannot_reset_global_rate_limit(monkeypatch):
+    monkeypatch.setattr(security, "MAX_KEYS", 3)
+    monkeypatch.setattr(security, "TRUST_PROXY", True)
+    monkeypatch.setattr(security, "GLOBAL_LIMIT", (5, 60))
+    with client() as c:
+        for i in range(5):
+            assert c.get("/health", headers={"x-real-ip": f"192.0.2.{i + 1}"}).status_code == 200
+        assert c.get("/health", headers={"x-real-ip": "198.51.100.2"}).status_code == 429
