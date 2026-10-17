@@ -1,101 +1,73 @@
+import Link from "next/link";
+
 export default function About() {
-  const paragraphStyle = {
-    marginBottom: 24,
-  };
-
   return (
-    <main
-      style={{
-        maxWidth: 760,
-        margin: "0 auto",
-        padding: "32px 24px 56px",
-        lineHeight: 1.6,
-      }}
-    >
-      <h1
-        style={{
-          fontSize: 32,
-          marginBottom: 32,
-        }}
-      >
-        About soundcovery
-      </h1>
+    <main className="text-page">
+      <header className="text-page-header">
+        <Link href="/" className="wordmark">
+          soundcovery
+        </Link>
+        <Link href="/" className="secondary-link compact-link">
+          Back to recommender
+        </Link>
+      </header>
 
-      <p style={paragraphStyle}>
-        Most music recommendation systems are heavily influenced by popularity
-        and listening bubbles.
-      </p>
+      <article className="text-article">
+        <p className="eyebrow">About Soundcovery</p>
+        <h1>Music discovery without popularity as the default answer.</h1>
 
-      <p style={paragraphStyle}>
-        soundcovery explores a different idea: helping people discover artists
-        based on what they love, not simply on what everyone else is listening
-        to.
-      </p>
-
-      <p style={paragraphStyle}>
-        The project was inspired by a simple question:
-      </p>
-
-      <p
-        style={{
-          fontStyle: "italic",
-          marginBottom: 32,
-        }}
-      >
-        "How did I miss that band?"
-      </p>
-
-      <p style={paragraphStyle}>
-        Festival lineups are full of artists that many visitors never get
-        around to discovering. Years later, you sometimes look back and wonder
-        how you missed a band you would go on to love — especially when they
-        were still playing the smallest stages and some of the hungriest shows
-        of their career. soundcovery tries to make those discoveries happen a
-        little earlier.
-      </p>
-
-      <p style={paragraphStyle}>
-        Recommendations are generated from available artist information and
-        similarity signals. This means they are not perfect, especially for
-        artists with very limited public information.
-      </p>
-
-      <p style={paragraphStyle}>
-        At the same time, lesser-known artists are not automatically ranked
-        lower simply because they have fewer listeners, followers or streams.
-      </p>
-
-      <p style={paragraphStyle}>
-        Sometimes that leads to unexpected recommendations.
-      </p>
-
-      <p style={paragraphStyle}>
-        Hopefully, some of them become great discoveries for you.
-      </p>
-
-      <div
-        style={{
-          marginTop: 40,
-          paddingTop: 24,
-          borderTop: "1px solid rgba(255, 255, 255, 0.15)",
-        }}
-      >
-        <p style={{ margin: 0 }}>
-          For festival partnerships, feedback or other enquiries, contact{" "}
-          <a
-            href="mailto:info@soundcovery.com"
-            style={{
-              color: "inherit",
-              fontWeight: 600,
-              textDecoration: "underline",
-              textUnderlineOffset: 3,
-            }}
-          >
-            info@soundcovery.com
-          </a>
-          .
+        <p className="lead">
+          Soundcovery started with a simple question: how do you find the artist
+          you would love before everyone already knows them?
         </p>
-      </div>
+
+        <h2>The problem</h2>
+        <p>
+          Most recommendation systems are influenced by what is already popular,
+          what similar listeners already play, or what has enough behavioural
+          data to be easy to recommend. Those signals can be useful, but they
+          also reinforce existing listening bubbles.
+        </p>
+
+        <h2>The approach</h2>
+        <p>
+          Soundcovery builds structured profiles of artists and compares them
+          across multiple musical and aesthetic dimensions. The goal is not to
+          reduce an artist to one genre label. It is to identify meaningful
+          neighbours: artists that share enough musical character to be worth
+          hearing, including smaller or less obvious names.
+        </p>
+
+        <p>
+          The current festival recommender applies that approach to a finite
+          lineup. You enter artists you already like; Soundcovery looks for the
+          strongest relevant connections among the acts you could actually see.
+        </p>
+
+        <h2>What it is not</h2>
+        <p>
+          Soundcovery is not a popularity chart with a conversational interface,
+          and it is not an attempt to make generated text the product. Models
+          and automation can help create and maintain the underlying structured
+          data, but the product is the discovery and analysis layer built on top
+          of it.
+        </p>
+
+        <h2>Where this goes</h2>
+        <p>
+          The same underlying artist profiles can support festival discovery,
+          artist analysis, comparable-artist research and integrations for teams
+          that need a richer view of musical positioning.
+        </p>
+
+        <div className="text-page-contact">
+          <p>
+            Festival partnerships, artist reports or feedback:
+            {" "}
+            <a href="mailto:info@soundcovery.com">info@soundcovery.com</a>
+          </p>
+        </div>
+      </article>
     </main>
   );
 }
