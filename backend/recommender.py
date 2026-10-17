@@ -1518,6 +1518,23 @@ def get_recommendations(
             "selected_date": selected_date,
         }
 
+    if candidates.empty:
+        return {
+            "festival": compact_festival_context(festival_context),
+            "input_artist_matches": input_artist_matches,
+            "found_artists": found_artists,
+            "not_found_artists": not_found_artists,
+            "recommendation_basis": join_naturally(found_artists),
+            "recommendation_groups": [], "recommendations": [],
+            "genre_policy_version": POLICY_VERSION,
+            "genre_quality_excluded": genre_quality_excluded,
+            "genre_incompatible_excluded": 0,
+            "time_filter": requested_time_filter,
+            "effective_time_filter": effective_time_filter,
+            "time_filter_applied": time_filter_applied,
+            "selected_date": selected_date,
+        }
+
     scored = score_candidates(candidates, profile, centers, feature_cols)
     genre_incompatible_excluded = int((~scored["genre_gate_allowed"]).sum())
     scored = scored.loc[scored["genre_gate_allowed"]].copy()
