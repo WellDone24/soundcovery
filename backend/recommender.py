@@ -1510,7 +1510,7 @@ def get_recommendations(
             "recommendation_groups": [],
             "recommendations": [],
             "genre_policy_version": POLICY_VERSION,
-            "genre_quality_excluded": genre_quality_excluded,
+            "genre_quality_excluded": 0,
             "genre_incompatible_excluded": 0,
             "time_filter": requested_time_filter,
             "effective_time_filter": effective_time_filter,
