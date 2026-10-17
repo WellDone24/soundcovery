@@ -1,0 +1,20 @@
+name: Genre quality parity tests
+on:
+  push:
+    branches: ["fix/genre-quality-parity-v3"]
+  pull_request:
+    paths:
+      - "backend/recommender.py"
+      - "backend/genre_policy.py"
+      - "backend/tests/test_genre_quality_parity.py"
+      - ".github/workflows/genre-quality-parity.yml"
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r backend/requirements.txt pytest
+      - run: pytest -q backend/tests/test_genre_quality_parity.py
