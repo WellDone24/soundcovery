@@ -13,6 +13,11 @@ from sklearn.cluster import KMeans
 from rapidfuzz import process, fuzz
 
 from festival_loader import resolve_festival_context
+from genre_policy import (
+    POLICY_VERSION, ADJUSTMENT_FACTORS, MIN_CONFIDENCE,
+    REQUIRED_PROMPT, REQUIRED_TAXONOMY, REQUIRED_MODEL,
+    eligible, relationship, compatibility,
+)
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,30 +38,8 @@ RECS_PER_CLUSTER = 5
 
 UNKNOWN_GENRE = "unknown"
 
-# Genre adjustment mirrors the current artist report:
-# - genre_aligned: same primary genre -> x1.00
-# - genre_adjacent: same primary genre family or explicit adjacent family -> x1.04
-# - cross_genre: otherwise (including missing primary genre) -> x1.10
-#
-# Secondary genres are retained as metadata but do not determine the
-# adjustment class. The recommender keeps its weighted perceptual distance
-# and multi-support bonus.
-GENRE_FAMILY_ADJACENCY = {
-    frozenset(("rock", "metal")),
-    frozenset(("rock", "pop")),
-    frozenset(("pop", "electronic")),
-    frozenset(("rock", "punk")),
-    frozenset(("metal", "punk")),
-    frozenset(("jazz", "soul")),
-    frozenset(("soul", "rnb")),
-    frozenset(("pop", "rnb")),
-}
-
-GENRE_ADJUSTMENT_FACTORS = {
-    "genre_aligned": 1.00,
-    "genre_adjacent": 1.04,
-    "cross_genre": 1.10,
-}
+# Shared with the v0.6.7 Artist-vs-Set report.
+GENRE_ADJUSTMENT_FACTORS = ADJUSTMENT_FACTORS
 
 STRONG_MATCH_MAX_SCORE = 35.0
 DECENT_MATCH_MAX_SCORE = 50.0
@@ -335,52 +318,34 @@ def load_candidate_set(
 
 
 def load_genres(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Select only current, eligible v3 classifications. Never fall back to v2."""
     df = pd.read_sql_query(
         f"""
-        SELECT
-            TRIM(mbid) AS mbid,
-            TRIM(primary_genre_id) AS primary_genre,
-            secondary_genre_ids_json,
-            confidence,
-            enriched_at
+        SELECT TRIM(mbid) AS mbid,
+               TRIM(primary_genre_id) AS primary_genre,
+               secondary_genre_ids_json, confidence, enriched_at,
+               model_name, prompt_version, taxonomy_version, status, is_active
         FROM {GENRE_TABLE}
-        WHERE mbid IS NOT NULL
-          AND is_active = 1
-        """,
-        conn,
+        WHERE mbid IS NOT NULL AND is_active = 1
+          AND status = 'success'
+          AND model_name = ? AND prompt_version = ? AND taxonomy_version = ?
+        """, conn, params=[REQUIRED_MODEL, REQUIRED_PROMPT, REQUIRED_TAXONOMY],
     )
-
+    fields = ["mbid", "primary_genre", "secondary_genre_ids_json"]
     if df.empty:
-        return pd.DataFrame(
-            columns=["mbid", "primary_genre", "secondary_genre_ids_json"]
-        )
-
-    df["primary_genre"] = (
-        df["primary_genre"]
-        .fillna(UNKNOWN_GENRE)
-        .astype(str)
-        .str.strip()
-        .replace("", UNKNOWN_GENRE)
-    )
-
-    df["confidence"] = pd.to_numeric(
-        df["confidence"], errors="coerce"
-    ).fillna(0.0)
-    df["enriched_at_dt"] = pd.to_datetime(
-        df["enriched_at"], errors="coerce"
-    )
-
-    df = (
-        df.sort_values(
-            ["mbid", "confidence", "enriched_at_dt"],
-            ascending=[True, False, False],
-        )
-        .drop_duplicates(subset=["mbid"], keep="first")
-    )
-
-    return df[
-        ["mbid", "primary_genre", "secondary_genre_ids_json"]
-    ].copy()
+        return pd.DataFrame(columns=fields)
+    df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce")
+    df = df[df.apply(lambda row: eligible(
+        row["primary_genre"], row["confidence"],
+        model_name=row["model_name"], prompt_version=row["prompt_version"],
+        taxonomy_version=row["taxonomy_version"], status=row["status"],
+        is_active=int(row["is_active"]),
+    ), axis=1)].copy()
+    if df.empty:
+        return pd.DataFrame(columns=fields)
+    df["enriched_at_dt"] = pd.to_datetime(df["enriched_at"], errors="coerce")
+    return (df.sort_values(["mbid", "enriched_at_dt"], ascending=[True, False])
+            .drop_duplicates(subset=["mbid"], keep="first")[fields].copy())
 
 
 def load_external_links(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -535,70 +500,12 @@ def get_artist_genres(row: pd.Series) -> list[str]:
     )
 
 
-def genre_family(genre_id: str | None) -> str | None:
-    if genre_id is None:
-        return None
-
-    value = str(genre_id).strip().lower()
-
-    if not value or value == UNKNOWN_GENRE:
-        return None
-
-    return value.split("_", 1)[0]
-
-
-def classify_genre_relationship(
-    reference: pd.Series,
-    candidate: pd.Series,
-) -> str:
-    """
-    Genre relationship aligned with the current artist report.
-
-    Primary genres determine the adjustment class.
-    Secondary genres remain available for explanation only and must not
-    upgrade a cross-genre pair to genre-adjacent.
-    """
-    ref_primary = reference.get("primary_genre")
-    cand_primary = candidate.get("primary_genre")
-
-    ref_primary = (
-        str(ref_primary).strip()
-        if pd.notna(ref_primary)
-        and str(ref_primary).strip()
-        and str(ref_primary).strip() != UNKNOWN_GENRE
-        else None
+def classify_genre_relationship(reference: pd.Series, candidate: pd.Series) -> str:
+    """Same taxonomy-aware genre relationship used by the Artist-vs-Set report."""
+    return relationship(
+        reference.get("primary_genre"), reference.get("secondary_genre_ids_json"),
+        candidate.get("primary_genre"), candidate.get("secondary_genre_ids_json"),
     )
-    cand_primary = (
-        str(cand_primary).strip()
-        if pd.notna(cand_primary)
-        and str(cand_primary).strip()
-        and str(cand_primary).strip() != UNKNOWN_GENRE
-        else None
-    )
-
-    # Same conservative behavior as the report:
-    # if primary genre is missing, do not grant a softer genre class.
-    if not ref_primary or not cand_primary:
-        return "cross_genre"
-
-    if ref_primary == cand_primary:
-        return "genre_aligned"
-
-    ref_family = genre_family(ref_primary)
-    cand_family = genre_family(cand_primary)
-
-    if ref_family and cand_family and ref_family == cand_family:
-        return "genre_adjacent"
-
-    if (
-        ref_family
-        and cand_family
-        and frozenset((ref_family, cand_family))
-        in GENRE_FAMILY_ADJACENCY
-    ):
-        return "genre_adjacent"
-
-    return "cross_genre"
 
 
 def axis_weight_vector(feature_cols: list[str]) -> np.ndarray:
@@ -1127,6 +1034,8 @@ def score_candidates(
     genre_factors = []
     genre_penalties = []
     genre_fits = []
+    genre_gate_allowed = []
+    genre_gate_reasons = []
     cluster_context_values = []
 
     multi_support_artists = []
@@ -1172,6 +1081,12 @@ def score_candidates(
             reference=support_row,
             candidate=row,
         )
+        allowed, gate_reason = compatibility(
+            support_row.get("primary_genre"), support_row.get("secondary_genre_ids_json"),
+            row.get("primary_genre"), row.get("secondary_genre_ids_json"),
+        )
+        genre_gate_allowed.append(allowed)
+        genre_gate_reasons.append(gate_reason)
         genre_factor = float(
             GENRE_ADJUSTMENT_FACTORS[genre_relation]
         )
@@ -1248,6 +1163,8 @@ def score_candidates(
     # adjustment expressed as score points, not a fixed +25 / +10.
     out["genre_penalty"] = genre_penalties
     out["genre_fit"] = genre_fits
+    out["genre_gate_allowed"] = genre_gate_allowed
+    out["genre_gate_reason"] = genre_gate_reasons
     out["cluster_context"] = cluster_context_values
 
     out["multi_support_artists"] = (
@@ -1364,6 +1281,7 @@ def build_recommendation_dict(
             float(row["genre_adjustment_factor"]), 4
         ),
         "genre_relation": row["genre_relation"],
+        "genre_gate_reason": row["genre_gate_reason"],
         "multi_support_bonus": round(float(row.get("multi_support_bonus", 0.0)), 4),
         "match_quality": quality,
         "genre_fit": row["genre_fit"],
@@ -1512,6 +1430,14 @@ def get_recommendations(
         matrix=matrix,
         artist_names=resolved_input_artists,
     )
+    ineligible_inputs = profile.loc[
+        profile["primary_genre"] == UNKNOWN_GENRE, "name"
+    ].astype(str).tolist()
+    if ineligible_inputs:
+        raise ValueError(
+            "No eligible genre classification (v3, confidence >= 70%) for input artist(s): "
+            + ", ".join(ineligible_inputs)
+        )
     profile_mbids = set(profile["mbid"])
     profile_names = set(
         profile["name"]
@@ -1568,6 +1494,10 @@ def get_recommendations(
             candidates["mbid"].isin(eligible_mbids)
         ].copy()
 
+    # Reject insufficient genre evidence before scoring and final top-N selection.
+    genre_quality_excluded = int((candidates["primary_genre"] == UNKNOWN_GENRE).sum())
+    candidates = candidates.loc[candidates["primary_genre"] != UNKNOWN_GENRE].copy()
+
     appearances_by_mbid = build_appearances_by_mbid(relevant_timetable)
 
     if candidates.empty:
@@ -1579,6 +1509,9 @@ def get_recommendations(
             "recommendation_basis": join_naturally(found_artists),
             "recommendation_groups": [],
             "recommendations": [],
+            "genre_policy_version": POLICY_VERSION,
+            "genre_quality_excluded": genre_quality_excluded,
+            "genre_incompatible_excluded": 0,
             "time_filter": requested_time_filter,
             "effective_time_filter": effective_time_filter,
             "time_filter_applied": time_filter_applied,
@@ -1586,6 +1519,8 @@ def get_recommendations(
         }
 
     scored = score_candidates(candidates, profile, centers, feature_cols)
+    genre_incompatible_excluded = int((~scored["genre_gate_allowed"]).sum())
+    scored = scored.loc[scored["genre_gate_allowed"]].copy()
 
     picked = pick_top_per_cluster(
         scored=scored,
@@ -1622,6 +1557,9 @@ def get_recommendations(
         "recommendation_basis": join_naturally(found_artists),
         "recommendation_groups": groups,
         "recommendations": flat_recommendations,
+        "genre_policy_version": POLICY_VERSION,
+        "genre_quality_excluded": genre_quality_excluded,
+        "genre_incompatible_excluded": genre_incompatible_excluded,
         "time_filter": requested_time_filter,
         "effective_time_filter": effective_time_filter,
         "time_filter_applied": time_filter_applied,
